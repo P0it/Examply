@@ -24,6 +24,8 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "pytest>=7.0.0",
     "ruff>=0.1.0",
+    "ulid-py>=1.1.0",
+    "pyyaml>=6.0.2",
 ]
 requires-python = ">= 3.11"
 

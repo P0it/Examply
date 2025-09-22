@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import admin, health, problems, sessions, attempts, reviews, stats
+from app.api import admin, health, problems, sessions, attempts, reviews, stats, upload
 from app.db.database import create_db_and_tables
 
 app = FastAPI(
@@ -31,6 +31,7 @@ app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(attempts.router, prefix="/attempts", tags=["attempts"])
 app.include_router(reviews.router, prefix="/reviews", tags=["reviews"])
 app.include_router(stats.router, prefix="/stats", tags=["stats"])
+app.include_router(upload.router, prefix="", tags=["upload"])
 
 
 @app.on_event("startup")
@@ -56,4 +57,4 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)

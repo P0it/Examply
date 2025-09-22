@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -154,6 +154,43 @@ export const getOverviewStats = () =>
 export const getProgressStats = () =>
   apiRequest('/stats/progress')
 
+// Upload and Import
+export interface UploadResponse {
+  job_id: string
+  message?: string
+}
+
+export interface ImportStatus {
+  status: 'queued' | 'running' | 'done' | 'error'
+  progress: number
+  stage: string
+  logs: string[]
+  extracted_count: number
+  error_message?: string
+  created_at: string
+  finished_at?: string
+}
+
+export const uploadPdf = (file: File): Promise<UploadResponse> => {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return apiRequest('/upload', {
+    method: 'POST',
+    headers: {}, // Remove Content-Type to let browser set it with boundary
+    body: formData
+  })
+}
+
+export const startImport = (jobId: string) =>
+  apiRequest(`/import/${jobId}/start`, { method: 'POST' })
+
+export const getImportStatus = (jobId: string): Promise<ImportStatus> =>
+  apiRequest(`/import/${jobId}/status`)
+
+export const getImportJobs = (limit: number = 10) =>
+  apiRequest(`/import/jobs?limit=${limit}`)
+
 // Admin
 export const importPdf = (file: File) => {
   const formData = new FormData()
@@ -165,9 +202,3 @@ export const importPdf = (file: File) => {
     body: formData
   })
 }
-
-export const getImportStatus = (jobId: string) =>
-  apiRequest(`/admin/import/${jobId}/status`)
-
-export const getImportJobs = () =>
-  apiRequest('/admin/import/jobs')

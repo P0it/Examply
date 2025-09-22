@@ -6,7 +6,8 @@
       "Bash(npx shadcn@latest init:*)",
       "Bash(npx shadcn@latest add:*)",
       "Bash(chmod:*)",
-      "WebFetch(domain:blocks.mvp-subha.me)"
+      "WebFetch(domain:blocks.mvp-subha.me)",
+      "Bash(uv add:*)"
     ],
     "deny": [],
     "ask": []

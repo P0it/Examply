@@ -1,3 +1,5 @@
+"use client"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
@@ -25,6 +27,9 @@ export default function HomePage() {
               </Button>
               <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
                 복습하기
+              </Button>
+              <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200" onClick={() => window.location.href = '/upload'}>
+                PDF 업로드
               </Button>
               <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
                 통계

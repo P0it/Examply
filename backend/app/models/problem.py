@@ -52,6 +52,7 @@ class Problem(SQLModel, table=True):
     explanation_image_url: Optional[str] = Field(default=None, description="Image URL for explanation")
 
     # Source information
+    source_doc_id: Optional[str] = Field(default=None, foreign_key="sourcedoc.id", description="Reference to source document")
     source_file: Optional[str] = Field(default=None, description="Original PDF filename")
     page_number: Optional[int] = Field(default=None, description="Page number in source")
 

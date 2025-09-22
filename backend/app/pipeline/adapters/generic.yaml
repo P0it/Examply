@@ -1,0 +1,75 @@
+# Generic problem parser adapter
+# Supports most common problem formats in Korean education materials
+
+name: "generic"
+description: "Generic parser for common Korean problem formats"
+priority: 1
+
+# Question detection patterns (regex)
+question_patterns:
+  - '^\s*\d+\.\s+'          # "1. " format
+  - '^\s*\(\d+\)\s+'        # "(1) " format
+  - '^\s*\[\d+\]\s+'        # "[1] " format
+  - '^\s*문제\s*\d+\s*[.:]' # "문제 1:" format
+  - '^\s*Q\d+\s*[.:]'       # "Q1:" format
+
+# Multiple choice markers
+choice_markers:
+  - ['①', '②', '③', '④', '⑤']           # Circle numbers
+  - ['㉠', '㉡', '㉢', '㉣', '㉤']         # Circled Korean
+  - ['1)', '2)', '3)', '4)', '5)']       # Numbers with parenthesis
+  - ['(1)', '(2)', '(3)', '(4)', '(5)'] # Numbers in parenthesis
+  - ['A.', 'B.', 'C.', 'D.', 'E.']     # Letters with dot
+  - ['가.', '나.', '다.', '라.', '마.']   # Korean letters
+  - ['ㄱ.', 'ㄴ.', 'ㄷ.', 'ㄹ.', 'ㅁ.'] # Korean consonants
+
+# Answer key patterns
+answer_patterns:
+  - '정답\s*[:：]\s*([①②③④⑤㉠㉡㉢㉣㉤\d가-마ㄱ-ㅁA-E])'
+  - '답\s*[:：]\s*([①②③④⑤㉠㉡㉢㉣㉤\d가-마ㄱ-ㅁA-E])'
+  - 'Answer\s*[:：]\s*([①②③④⑤㉠㉡㉢㉣㉤\d가-마ㄱ-ㅁA-E])'
+  - '정답은\s*([①②③④⑤㉠㉡㉢㉣㉤\d가-마ㄱ-ㅁA-E])'
+
+# Explanation markers
+explanation_markers:
+  - '해설\s*[:：]'
+  - '풀이\s*[:：]'
+  - '설명\s*[:：]'
+  - 'Explanation\s*[:：]'
+  - 'Solution\s*[:：]'
+
+# Text cleaning rules
+header_footer_rules:
+  - '^.*페이지.*$'          # Page numbers
+  - '^.*쪽.*$'             # Page in Korean
+  - '^.*Page\s+\d+.*$'     # Page in English
+  - '^\s*\d+\s*$'          # Standalone numbers
+  - '^.*Copyright.*$'      # Copyright notices
+  - '^.*저작권.*$'         # Copyright in Korean
+
+# Difficulty indicators (optional)
+difficulty_patterns:
+  - '★'     # Easy (1 star)
+  - '★★'   # Medium (2 stars)
+  - '★★★' # Hard (3 stars)
+
+# Subject detection (optional)
+subject_patterns:
+  - '수학': 'mathematics'
+  - '영어': 'english'
+  - '국어': 'korean'
+  - '과학': 'science'
+  - '사회': 'social_studies'
+  - '역사': 'history'
+  - '지리': 'geography'
+  - '물리': 'physics'
+  - '화학': 'chemistry'
+  - '생물': 'biology'
+
+# Processing hints
+hints:
+  two_column: false              # Assume single column layout
+  min_question_length: 10        # Minimum characters for a valid question
+  max_choices: 5                 # Maximum number of choices
+  min_choices: 2                 # Minimum number of choices
+  case_sensitive_answers: false  # Answer matching is case insensitive

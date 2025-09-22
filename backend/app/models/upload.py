@@ -17,7 +17,7 @@ class ImportStatus(str, Enum):
 
 class SourceDoc(SQLModel, table=True):
     """Source document model for uploaded PDFs."""
-    id: str = Field(default_factory=lambda: ulid.new().str, primary_key=True)
+    id: str = Field(default_factory=lambda: str(ulid.ULID()), primary_key=True)
     filename: str = Field(description="Original filename")
     content_type: str = Field(description="MIME type")
     size: int = Field(description="File size in bytes")
@@ -28,7 +28,7 @@ class SourceDoc(SQLModel, table=True):
 
 class ImportJob(SQLModel, table=True):
     """Import job model for tracking PDF processing."""
-    id: str = Field(default_factory=lambda: ulid.new().str, primary_key=True)
+    id: str = Field(default_factory=lambda: str(ulid.ULID()), primary_key=True)
     source_doc_id: str = Field(foreign_key="sourcedoc.id")
     status: ImportStatus = Field(default=ImportStatus.QUEUED)
     progress: int = Field(default=0, description="Progress percentage 0-100")

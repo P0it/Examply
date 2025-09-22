@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -80,7 +80,7 @@ export const createSession = (data: {
   body: JSON.stringify(data)
 })
 
-export const getSession = (id: number) =>
+export const getLearningSession = (id: number) =>
   apiRequest(`/sessions/${id}`)
 
 export const getNextProblem = (sessionId: number) =>
@@ -190,6 +190,55 @@ export const getImportStatus = (jobId: string): Promise<ImportStatus> =>
 
 export const getImportJobs = (limit: number = 10) =>
   apiRequest(`/import/jobs?limit=${limit}`)
+
+// Sessions
+export interface SessionResponse {
+  sessions: Array<{
+    id: number
+    name: string
+    source_doc_id: string
+    source_filename: string
+    status: 'active' | 'paused' | 'completed'
+    current_problem_index: number
+    total_problems: number
+    created_at: string
+    last_accessed_at?: string
+    progress: {
+      current_index: number
+      total_problems: number
+      completed_count: number
+      skipped_count: number
+      bookmarked_count: number
+      progress_percentage: number
+    }
+  }>
+  total: number
+  limit: number
+  offset: number
+}
+
+export const getSessions = (params?: {
+  source_doc_id?: string
+  status?: string
+  limit?: number
+  offset?: number
+}): Promise<SessionResponse> => {
+  const searchParams = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+  }
+  return apiRequest(`/sessions/list?${searchParams}`)
+}
+
+export const getSessionDetail = (sessionId: number) =>
+  apiRequest(`/sessions/${sessionId}`)
+
+export const startSession = (sessionId: number) =>
+  apiRequest(`/sessions/${sessionId}/start`, { method: 'POST' })
 
 // Admin
 export const importPdf = (file: File) => {

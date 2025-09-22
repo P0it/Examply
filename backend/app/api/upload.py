@@ -10,7 +10,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
-from app.db.database import get_session
+from app.db.database import engine
 from app.models import SourceDoc, ImportJob, ImportStatus
 from app.services.import_service import ImportService
 
@@ -77,7 +77,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         sha256 = calculate_sha256(file_path)
 
         # Check for duplicate files
-        with Session(get_session()) as session:
+        with Session(engine) as session:
             existing_doc = session.exec(
                 select(SourceDoc).where(SourceDoc.sha256 == sha256)
             ).first()
@@ -102,7 +102,7 @@ async def upload_pdf(file: UploadFile = File(...)):
                     return {"job_id": new_job.id, "message": "New job created for existing file"}
 
         # Create source document record
-        with Session(get_session()) as session:
+        with Session(engine) as session:
             source_doc = SourceDoc(
                 filename=file.filename,
                 content_type=file.content_type,
@@ -132,7 +132,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 @router.post("/import/{job_id}/start")
 async def start_import(job_id: str, background_tasks: BackgroundTasks):
     """Start the import process for a job."""
-    with Session(get_session()) as session:
+    with Session(engine) as session:
         job = session.get(ImportJob, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -155,7 +155,7 @@ async def start_import(job_id: str, background_tasks: BackgroundTasks):
 @router.get("/import/{job_id}/status")
 async def get_import_status(job_id: str) -> Dict[str, Any]:
     """Get the status of an import job."""
-    with Session(get_session()) as session:
+    with Session(engine) as session:
         job = session.get(ImportJob, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -175,7 +175,7 @@ async def get_import_status(job_id: str) -> Dict[str, Any]:
 @router.get("/import/jobs")
 async def list_import_jobs(limit: int = 10):
     """List recent import jobs."""
-    with Session(get_session()) as session:
+    with Session(engine) as session:
         jobs = session.exec(
             select(ImportJob).order_by(ImportJob.created_at.desc()).limit(limit)
         ).all()

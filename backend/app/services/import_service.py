@@ -5,10 +5,11 @@ import os
 import traceback
 from datetime import datetime
 from typing import Optional
-from sqlmodel import Session
+from sqlmodel import Session as DBSession
 
-from app.db.database import get_session
-from app.models import ImportJob, SourceDoc, Problem, ProblemChoice, ImportStatus
+from app.db.database import engine
+from sqlmodel import select
+from app.models import ImportJob, SourceDoc, Problem, ProblemChoice, ImportStatus, Session, SessionProblem, SessionStatus
 from app.pipeline.text_extractor import TextExtractor
 from app.pipeline.adapter_engine import AdapterEngine
 from app.services.problem_service import ProblemService
@@ -27,7 +28,7 @@ class ImportService:
 
     async def process_import_job(self, job_id: str):
         """Process an import job with detailed progress tracking."""
-        with Session(get_session()) as session:
+        with DBSession(engine) as session:
             job = session.get(ImportJob, job_id)
             if not job:
                 logger.error(f"Job {job_id} not found")
@@ -125,7 +126,39 @@ class ImportService:
 
                 session.commit()
 
-                # Step 5: Completion
+                # Step 5: Create learning session
+                job.update_progress(95, "학습 세션 생성 중...")
+                session.add(job)
+                session.commit()
+
+                # Get all problems from this source document
+                problems = session.exec(
+                    select(Problem).where(Problem.source_doc_id == source_doc.id)
+                ).all()
+
+                if problems:
+                    # Create a new session for this document
+                    learning_session = Session(
+                        name=f"{source_doc.filename} 학습",
+                        source_doc_id=source_doc.id,
+                        total_problems=len(problems),
+                        status=SessionStatus.ACTIVE
+                    )
+                    session.add(learning_session)
+                    session.flush()  # Get the session ID
+
+                    # Add all problems to the session
+                    for index, problem in enumerate(problems):
+                        session_problem = SessionProblem(
+                            session_id=learning_session.id,
+                            problem_id=problem.id,
+                            order_index=index
+                        )
+                        session.add(session_problem)
+
+                    job.add_log(f"학습 세션 생성 완료: {len(problems)}개 문제")
+
+                # Step 6: Completion
                 job.status = ImportStatus.DONE
                 job.progress = 100
                 job.stage = "완료"
@@ -149,7 +182,7 @@ class ImportService:
                 session.add(job)
                 session.commit()
 
-    def _update_extraction_progress(self, session: Session, job: ImportJob, progress: int, stage: str):
+    def _update_extraction_progress(self, session: DBSession, job: ImportJob, progress: int, stage: str):
         """Update progress during text extraction."""
         # Map extraction progress (0-100) to job progress (10-60)
         job_progress = 10 + (progress * 50 // 100)

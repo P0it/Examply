@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 from sqlmodel import Session
 
 from app.models.problem import Problem, ProblemChoice
-from app.db.database import get_session
+from app.db.database import engine
 
 
 class ProblemService:
@@ -16,7 +16,7 @@ class ProblemService:
 
     async def create_problem(self, problem_data: Dict[str, Any]) -> Problem:
         """Create new problem from parsed data."""
-        with Session(get_session()) as session:
+        with Session(engine) as session:
             # Create problem
             problem = Problem(
                 question_text=problem_data["question_text"],

@@ -1,12 +1,187 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { BookOpen, Brain, BarChart3, Settings, Sparkles, Users, Trophy, ArrowRight } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { UploadDropzone } from "@/components/upload-dropzone"
+import { BookOpen, Brain, Upload, Play, Clock, CheckCircle, FileText, Plus } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { motion, AnimatePresence } from "framer-motion"
+import { useToast } from "@/hooks/use-toast"
+import { uploadPdf, startImport, getImportStatus, getSessions, type SessionResponse } from "@/lib/api"
+
+interface Session {
+  id: number
+  name: string
+  source_doc_id: string
+  status: 'active' | 'paused' | 'completed'
+  current_problem_index: number
+  total_problems: number
+  created_at: string
+  last_accessed_at?: string
+  progress: {
+    completed_count: number
+    skipped_count: number
+    bookmarked_count: number
+    progress_percentage: number
+  }
+}
 
 export default function HomePage() {
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploadStatus, setUploadStatus] = useState<{
+    status: 'idle' | 'uploading' | 'processing'
+    progress: number
+    stage: string
+  }>({
+    status: 'idle',
+    progress: 0,
+    stage: ''
+  })
+  const { toast } = useToast()
+
+  const handleFileSelect = (file: File) => {
+    setSelectedFile(file)
+  }
+
+  const handleQuickUpload = async () => {
+    if (!selectedFile) return
+
+    try {
+      setUploadStatus({ status: 'uploading', progress: 0, stage: '파일 업로드 중...' })
+
+      const { job_id } = await uploadPdf(selectedFile)
+      await startImport(job_id)
+
+      setUploadStatus({ status: 'processing', progress: 50, stage: '문제 분석 중...' })
+
+      // Poll for completion
+      const poll = async () => {
+        try {
+          const status = await getImportStatus(job_id)
+          setUploadStatus({
+            status: 'processing',
+            progress: status.progress,
+            stage: status.stage
+          })
+
+          if (status.status === 'done') {
+            setUploadStatus({ status: 'idle', progress: 0, stage: '' })
+            setSelectedFile(null)
+            toast({
+              title: "업로드 완료",
+              description: `${status.extracted_count}개의 문제가 추출되어 새 학습 세션이 생성되었습니다.`
+            })
+            // Refresh sessions list
+            loadSessions()
+          } else if (status.status === 'error') {
+            setUploadStatus({ status: 'idle', progress: 0, stage: '' })
+            toast({
+              title: "업로드 실패",
+              description: status.error_message || "알 수 없는 오류가 발생했습니다.",
+              variant: "destructive"
+            })
+          } else {
+            setTimeout(poll, 2000)
+          }
+        } catch (error) {
+          console.error('Polling error:', error)
+        }
+      }
+      poll()
+
+    } catch (error) {
+      setUploadStatus({ status: 'idle', progress: 0, stage: '' })
+      toast({
+        title: "업로드 실패",
+        description: error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const loadSessions = async () => {
+    try {
+      const response = await getSessions({ limit: 20 })
+      setSessions(response.sessions.map(session => ({
+        id: session.id,
+        name: session.name,
+        source_doc_id: session.source_doc_id,
+        status: session.status,
+        current_problem_index: session.current_problem_index,
+        total_problems: session.total_problems,
+        created_at: session.created_at,
+        last_accessed_at: session.last_accessed_at,
+        progress: session.progress
+      })))
+    } catch (error) {
+      console.error('Failed to load sessions:', error)
+      // Fallback to mock data for development
+      setSessions([
+        {
+          id: 1,
+          name: "수학 문제집.pdf 학습",
+          source_doc_id: "doc-1",
+          status: 'active',
+          current_problem_index: 5,
+          total_problems: 25,
+          created_at: "2024-01-15T10:30:00Z",
+          last_accessed_at: "2024-01-15T14:20:00Z",
+          progress: {
+            current_index: 5,
+            total_problems: 25,
+            completed_count: 5,
+            skipped_count: 2,
+            bookmarked_count: 3,
+            progress_percentage: 20
+          }
+        },
+        {
+          id: 2,
+          name: "영어 독해.pdf 학습",
+          source_doc_id: "doc-2",
+          status: 'paused',
+          current_problem_index: 12,
+          total_problems: 30,
+          created_at: "2024-01-14T09:15:00Z",
+          last_accessed_at: "2024-01-14T16:45:00Z",
+          progress: {
+            current_index: 12,
+            total_problems: 30,
+            completed_count: 10,
+            skipped_count: 1,
+            bookmarked_count: 5,
+            progress_percentage: 33
+          }
+        }
+      ])
+    }
+  }
+
+  useEffect(() => {
+    loadSessions()
+  }, [])
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active': return 'bg-green-500'
+      case 'paused': return 'bg-yellow-500'
+      case 'completed': return 'bg-blue-500'
+      default: return 'bg-gray-500'
+    }
+  }
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'active': return '진행중'
+      case 'paused': return '일시정지'
+      case 'completed': return '완료'
+      default: return '알 수 없음'
+    }
+  }
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/20 dark:from-background dark:via-primary/10 dark:to-purple-950/20">
       {/* Header */}
@@ -23,13 +198,10 @@ export default function HomePage() {
             </div>
             <nav className="flex items-center space-x-6">
               <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
-                문제 풀기
-              </Button>
-              <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
                 복습하기
               </Button>
               <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200" onClick={() => window.location.href = '/upload'}>
-                PDF 업로드
+                상세 업로드
               </Button>
               <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
                 통계
@@ -41,273 +213,224 @@ export default function HomePage() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        {/* Hero Section */}
-        <div className="text-center mb-16 relative">
-          <div className="absolute inset-0 -z-10">
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 bg-primary/5 rounded-full blur-3xl"></div>
-            <div className="absolute top-1/3 left-1/3 w-48 h-48 bg-secondary/10 rounded-full blur-2xl"></div>
-            <div className="absolute bottom-1/3 right-1/3 w-56 h-56 bg-accent/10 rounded-full blur-2xl"></div>
-          </div>
-
-          <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-2 rounded-full text-sm font-medium mb-6">
-            <Sparkles className="h-4 w-4" />
-            AI 기반 맞춤형 학습 시스템
-          </div>
-
-          <h2 className="text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-foreground via-foreground to-foreground/70 bg-clip-text text-transparent">
-            스마트한 문제 풀이
-            <br />
-            <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-              학습 플랫폼
-            </span>
-          </h2>
-
-          <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto leading-relaxed">
-            PDF 문제집을 AI로 분석하여 개인 맞춤형 플래시카드 학습을 제공합니다.
-            <br />
-            효율적인 반복 학습으로 성적 향상을 경험해보세요.
-          </p>
-
-          <div className="flex flex-col sm:flex-row justify-center gap-4 mb-8">
-            <Button size="lg" className="px-8 py-6 text-lg shadow-lg hover:shadow-xl transition-all duration-300 group">
-              <BookOpen className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-              새 세션 시작하기
-              <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-            </Button>
-            <Button variant="outline" size="lg" className="px-8 py-6 text-lg hover:bg-primary/5 transition-all duration-200">
-              <Users className="mr-2 h-5 w-5" />
-              데모 체험하기
-            </Button>
-          </div>
-
-          <div className="flex justify-center items-center gap-8 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              무료로 시작
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-              AI 자동 분석
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-              실시간 진도 추적
-            </div>
-          </div>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
-          <Card className="group hover:shadow-lg transition-all duration-300 border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/5 to-purple-50/50 dark:from-slate-900/50 dark:via-primary/10 dark:to-purple-950/30 hover:scale-105">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">총 문제 수</CardTitle>
-              <div className="p-2 bg-blue-500/10 rounded-lg">
-                <BookOpen className="h-4 w-4 text-blue-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-blue-500 bg-clip-text text-transparent">
-                1,234
-              </div>
-              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                <div className="w-1 h-1 bg-green-500 rounded-full"></div>
-                다양한 과목의 문제
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="group hover:shadow-lg transition-all duration-300 border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/50 dark:from-slate-900/50 dark:via-primary/8 dark:to-purple-950/30 hover:scale-105">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">정답률</CardTitle>
-              <div className="p-2 bg-green-500/10 rounded-lg">
-                <BarChart3 className="h-4 w-4 text-green-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold mb-2 bg-gradient-to-r from-green-600 to-green-500 bg-clip-text text-transparent">
-                85.2%
-              </div>
-              <div className="text-xs text-green-600 flex items-center gap-1">
-                <div className="w-1 h-1 bg-green-500 rounded-full"></div>
-                지난 주 대비 +5.2%
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="group hover:shadow-lg transition-all duration-300 border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/50 dark:from-slate-900/50 dark:via-primary/8 dark:to-purple-950/30 hover:scale-105">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">학습 시간</CardTitle>
-              <div className="p-2 bg-purple-500/10 rounded-lg">
-                <Brain className="h-4 w-4 text-purple-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold mb-2 bg-gradient-to-r from-purple-600 to-purple-500 bg-clip-text text-transparent">
-                24시간
-              </div>
-              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                <div className="w-1 h-1 bg-purple-500 rounded-full"></div>
-                이번 월 누적
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-16">
-          {/* Start Session */}
-          <Card className="group hover:shadow-xl transition-all duration-500 border border-border/60 hover:border-primary/40 bg-gradient-to-br from-card via-primary/5 to-blue-50/30 dark:from-slate-900/80 dark:via-primary/10 dark:to-blue-950/40 overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-purple-500/5 to-blue-500/10 dark:from-primary/20 dark:via-purple-500/10 dark:to-blue-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-            <CardHeader className="relative">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-primary/10 rounded-lg">
-                  <BookOpen className="h-5 w-5 text-primary" />
-                </div>
-                <CardTitle className="text-xl">새 학습 세션</CardTitle>
-              </div>
-              <CardDescription className="text-base">
-                과목과 난이도를 선택하여 맞춤형 문제 풀이를 시작하세요
+      <main className="container mx-auto px-4 py-8 max-w-6xl">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Upload Section */}
+          <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Upload className="h-5 w-5 text-primary" />
+                빠른 업로드
+              </CardTitle>
+              <CardDescription>
+                PDF 문제집을 드래그하여 즉시 학습 세션을 만드세요
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6 relative">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="group/subject hover:scale-105 transition-all duration-200 cursor-pointer">
-                  <div className="h-20 p-4 rounded-xl border border-blue-200 hover:border-blue-400 bg-blue-50/50 hover:bg-blue-100/80 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 dark:border-blue-800 dark:hover:border-blue-600 flex flex-col items-center justify-center transition-all duration-200 shadow-sm hover:shadow-md">
-                    <span className="font-semibold text-blue-600 dark:text-blue-400">수학</span>
-                    <span className="text-sm text-muted-foreground">120 문제</span>
+            <CardContent>
+              <div className="space-y-4">
+                <UploadDropzone onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+
+                {selectedFile && uploadStatus.status === 'idle' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="flex items-center justify-between p-3 bg-primary/5 dark:bg-primary/10 rounded-lg border border-primary/20"
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-primary" />
+                      <span className="font-medium">{selectedFile.name}</span>
+                    </div>
+                    <Button onClick={handleQuickUpload} size="sm">
+                      분석 시작
+                    </Button>
+                  </motion.div>
+                )}
+
+                {uploadStatus.status !== 'idle' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="space-y-3"
+                  >
+                    <div className="flex justify-between text-sm">
+                      <span>{uploadStatus.stage}</span>
+                      <span>{uploadStatus.progress}%</span>
+                    </div>
+                    <Progress value={uploadStatus.progress} className="h-2" />
+                  </motion.div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground pt-2">
+                  <div className="flex items-center justify-center gap-1">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                    자동 OCR
                   </div>
-                </div>
-                <div className="group/subject hover:scale-105 transition-all duration-200 cursor-pointer">
-                  <div className="h-20 p-4 rounded-xl border border-green-200 hover:border-green-400 bg-green-50/50 hover:bg-green-100/80 dark:bg-green-950/20 dark:hover:bg-green-950/40 dark:border-green-800 dark:hover:border-green-600 flex flex-col items-center justify-center transition-all duration-200 shadow-sm hover:shadow-md">
-                    <span className="font-semibold text-green-600 dark:text-green-400">과학</span>
-                    <span className="text-sm text-muted-foreground">89 문제</span>
+                  <div className="flex items-center justify-center gap-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    문제 추출
                   </div>
-                </div>
-                <div className="group/subject hover:scale-105 transition-all duration-200 cursor-pointer">
-                  <div className="h-20 p-4 rounded-xl border border-purple-200 hover:border-purple-400 bg-purple-50/50 hover:bg-purple-100/80 dark:bg-purple-950/20 dark:hover:bg-purple-950/40 dark:border-purple-800 dark:hover:border-purple-600 flex flex-col items-center justify-center transition-all duration-200 shadow-sm hover:shadow-md">
-                    <span className="font-semibold text-purple-600 dark:text-purple-400">영어</span>
-                    <span className="text-sm text-muted-foreground">156 문제</span>
-                  </div>
-                </div>
-                <div className="group/subject hover:scale-105 transition-all duration-200 cursor-pointer">
-                  <div className="h-20 p-4 rounded-xl border border-orange-200 hover:border-orange-400 bg-orange-50/50 hover:bg-orange-100/80 dark:bg-orange-950/20 dark:hover:bg-orange-950/40 dark:border-orange-800 dark:hover:border-orange-600 flex flex-col items-center justify-center transition-all duration-200 shadow-sm hover:shadow-md">
-                    <span className="font-semibold text-orange-600 dark:text-orange-400">사회</span>
-                    <span className="text-sm text-muted-foreground">78 문제</span>
+                  <div className="flex items-center justify-center gap-1">
+                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                    세션 생성
                   </div>
                 </div>
               </div>
-              <Button className="w-full group/btn" size="lg">
-                <Trophy className="mr-2 h-4 w-4 group-hover/btn:scale-110 transition-transform" />
-                세션 설정하기
-                <ArrowRight className="ml-2 h-4 w-4 group-hover/btn:translate-x-1 transition-transform" />
+            </CardContent>
+          </Card>
+
+          {/* Quick Actions */}
+          <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-orange-50/30 to-amber-50/30 dark:from-slate-900/80 dark:via-orange-950/20 dark:to-amber-950/30">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Plus className="h-5 w-5 text-primary" />
+                빠른 시작
+              </CardTitle>
+              <CardDescription>
+                기존 문제로 바로 학습을 시작하거나 복습하세요
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/study'}>
+                <BookOpen className="mr-3 h-5 w-5" />
+                <div className="text-left">
+                  <div className="font-medium">랜덤 문제 풀기</div>
+                  <div className="text-xs text-muted-foreground">모든 문제에서 랜덤 선택</div>
+                </div>
+              </Button>
+              <Button variant="outline" className="w-full justify-start h-12">
+                <Clock className="mr-3 h-5 w-5" />
+                <div className="text-left">
+                  <div className="font-medium">복습하기</div>
+                  <div className="text-xs text-muted-foreground">틀린 문제와 북마크 문제</div>
+                </div>
+              </Button>
+              <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/upload'}>
+                <Upload className="mr-3 h-5 w-5" />
+                <div className="text-left">
+                  <div className="font-medium">상세 업로드</div>
+                  <div className="text-xs text-muted-foreground">업로드 옵션과 진행상황 보기</div>
+                </div>
               </Button>
             </CardContent>
           </Card>
-
-          {/* Review Section */}
-          <Card className="group hover:shadow-xl transition-all duration-500 border border-border/60 hover:border-primary/40 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30 overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-purple-500/5 to-violet-500/10 dark:from-primary/20 dark:via-purple-500/10 dark:to-violet-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-            <CardHeader className="relative">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-primary/10 rounded-lg">
-                  <BarChart3 className="h-5 w-5 text-primary" />
-                </div>
-                <CardTitle className="text-xl">복습하기</CardTitle>
-              </div>
-              <CardDescription className="text-base">
-                틀린 문제나 북마크한 문제를 다시 풀어보세요
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 relative">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/30 hover:shadow-md transition-all duration-200">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                    <span className="font-medium">오답 문제</span>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <span className="text-sm bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-2 py-1 rounded-full font-medium">12개</span>
-                    <Button size="sm" variant="outline" className="hover:bg-red-50 hover:border-red-300 transition-colors">
-                      복습
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between p-4 rounded-xl bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-100 dark:border-yellow-900/30 hover:shadow-md transition-all duration-200">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                    <span className="font-medium">북마크 문제</span>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <span className="text-sm bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 px-2 py-1 rounded-full font-medium">8개</span>
-                    <Button size="sm" variant="outline" className="hover:bg-yellow-50 hover:border-yellow-300 transition-colors">
-                      복습
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between p-4 rounded-xl bg-gray-50 dark:bg-gray-950/20 border border-gray-100 dark:border-gray-900/30 hover:shadow-md transition-all duration-200">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
-                    <span className="font-medium">스킵한 문제</span>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <span className="text-sm bg-gray-100 dark:bg-gray-900/30 text-gray-700 dark:text-gray-300 px-2 py-1 rounded-full font-medium">5개</span>
-                    <Button size="sm" variant="outline" className="hover:bg-gray-50 hover:border-gray-300 transition-colors">
-                      복습
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-border/50">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium">주간 진도</span>
-                  <span className="text-sm font-bold text-primary">68%</span>
-                </div>
-                <div className="relative">
-                  <Progress value={68} className="h-3 bg-muted" />
-                  <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-primary/5 rounded-full opacity-50"></div>
-                </div>
-                <div className="text-xs text-muted-foreground mt-2">목표까지 32% 남음</div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
-        {/* Recent Activity */}
+        {/* Learning Sessions */}
         <div className="mt-12">
-          <Card className="border border-border/60 hover:border-primary/30 hover:shadow-lg transition-all duration-300 bg-gradient-to-br from-card via-slate-50/50 to-gray-50/50 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-gray-900/50">
-            <CardHeader>
-              <CardTitle>최근 활동</CardTitle>
-              <CardDescription>지난 학습 세션들의 결과를 확인하세요</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {[
-                  { subject: "수학", problems: 15, correct: 12, time: "25분" },
-                  { subject: "과학", problems: 20, correct: 18, time: "32분" },
-                  { subject: "영어", problems: 10, correct: 8, time: "18분" },
-                ].map((session, index) => (
-                  <div key={index} className="flex items-center justify-between py-2">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-2 h-2 bg-primary rounded-full"></div>
-                      <div>
-                        <span className="font-medium">{session.subject}</span>
-                        <span className="text-sm text-muted-foreground ml-2">
-                          {session.correct}/{session.problems} 정답
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {session.time}
-                    </div>
-                  </div>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold">내 학습 세션</h2>
+            <Badge variant="secondary" className="text-sm">
+              {sessions.length}개 세션
+            </Badge>
+          </div>
+
+          <AnimatePresence>
+            {sessions.length === 0 ? (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-center py-12"
+              >
+                <FileText className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
+                <h3 className="text-lg font-medium text-muted-foreground mb-2">
+                  아직 학습 세션이 없습니다
+                </h3>
+                <p className="text-muted-foreground mb-4">
+                  PDF를 업로드하여 첫 번째 학습 세션을 만들어보세요
+                </p>
+                <Button onClick={() => setSelectedFile(null)}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  PDF 업로드하기
+                </Button>
+              </motion.div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {sessions.map((session, index) => (
+                  <motion.div
+                    key={session.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                  >
+                    <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-slate-50/30 to-gray-50/30 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-gray-900/50 hover:shadow-lg transition-all duration-300 group cursor-pointer">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-primary/10 rounded-lg">
+                              <BookOpen className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                              <CardTitle className="text-lg line-clamp-1">
+                                {session.name}
+                              </CardTitle>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`}></div>
+                                <span className="text-sm text-muted-foreground">
+                                  {getStatusText(session.status)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <Badge variant={session.status === 'completed' ? 'default' : 'secondary'}>
+                            {Math.round(session.progress.progress_percentage)}%
+                          </Badge>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                              <span>진행률</span>
+                              <span>{session.current_problem_index + 1} / {session.total_problems}</span>
+                            </div>
+                            <Progress value={session.progress.progress_percentage} className="h-2" />
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-4 text-center">
+                            <div>
+                              <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                                {session.progress.completed_count}
+                              </div>
+                              <div className="text-xs text-muted-foreground">완료</div>
+                            </div>
+                            <div>
+                              <div className="text-lg font-bold text-yellow-600 dark:text-yellow-400">
+                                {session.progress.skipped_count}
+                              </div>
+                              <div className="text-xs text-muted-foreground">스킵</div>
+                            </div>
+                            <div>
+                              <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                                {session.progress.bookmarked_count}
+                              </div>
+                              <div className="text-xs text-muted-foreground">북마크</div>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 pt-2">
+                            <Button className="flex-1 group/btn" size="sm" onClick={() => window.location.href = `/study?session=${session.id}`}>
+                              <Play className="mr-2 h-4 w-4 group-hover/btn:scale-110 transition-transform" />
+                              {session.status === 'completed' ? '다시 풀기' : '계속하기'}
+                            </Button>
+                            <Button variant="outline" size="sm">
+                              <Clock className="h-4 w-4" />
+                            </Button>
+                          </div>
+
+                          <div className="text-xs text-muted-foreground">
+                            {session.last_accessed_at ?
+                              `마지막 접속: ${new Date(session.last_accessed_at).toLocaleDateString('ko-KR')}` :
+                              `생성: ${new Date(session.created_at).toLocaleDateString('ko-KR')}`
+                            }
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </AnimatePresence>
         </div>
       </main>
     </div>

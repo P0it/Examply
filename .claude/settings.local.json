@@ -7,7 +7,16 @@
       "Bash(npx shadcn@latest add:*)",
       "Bash(chmod:*)",
       "WebFetch(domain:blocks.mvp-subha.me)",
-      "Bash(uv add:*)"
+      "Bash(uv add:*)",
+      "Bash(uv run:*)",
+      "Bash(curl:*)",
+      "Bash(del examply.db)",
+      "Bash(powershell:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

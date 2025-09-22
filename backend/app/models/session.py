@@ -41,6 +41,9 @@ class Session(SQLModel, table=True):
     name: Optional[str] = Field(default=None, description="Optional session name")
     status: SessionStatus = Field(default=SessionStatus.ACTIVE)
 
+    # Source document reference
+    source_doc_id: Optional[str] = Field(default=None, foreign_key="sourcedoc.id", description="Source document for this session")
+
     # Filters applied to create this session
     subject_filter: Optional[str] = Field(default=None)
     topic_filter: Optional[str] = Field(default=None)

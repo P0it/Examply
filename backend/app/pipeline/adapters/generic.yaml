@@ -55,16 +55,16 @@ difficulty_patterns:
 
 # Subject detection (optional)
 subject_patterns:
-  - '수학': 'mathematics'
-  - '영어': 'english'
-  - '국어': 'korean'
-  - '과학': 'science'
-  - '사회': 'social_studies'
-  - '역사': 'history'
-  - '지리': 'geography'
-  - '물리': 'physics'
-  - '화학': 'chemistry'
-  - '생물': 'biology'
+  '수학': 'mathematics'
+  '영어': 'english'
+  '국어': 'korean'
+  '과학': 'science'
+  '사회': 'social_studies'
+  '역사': 'history'
+  '지리': 'geography'
+  '물리': 'physics'
+  '화학': 'chemistry'
+  '생물': 'biology'
 
 # Processing hints
 hints:

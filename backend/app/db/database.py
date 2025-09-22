@@ -6,7 +6,7 @@ from sqlmodel import SQLModel, create_engine, Session
 from typing import Generator
 
 # Database URL - defaults to SQLite, can be overridden with environment variable
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./examply.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./examply_v2.db")
 
 # Create engine
 if DATABASE_URL.startswith("sqlite"):
@@ -27,7 +27,7 @@ else:
 def create_db_and_tables():
     """Create database tables."""
     # Import all models to ensure they are registered
-    from app.models import Problem, ProblemChoice, Session as ProblemSession, SessionProblem, Attempt, User
+    from app.models import Problem, ProblemChoice, Session as ProblemSession, SessionProblem, Attempt, User, SourceDoc, ImportJob
 
     SQLModel.metadata.create_all(engine)
 

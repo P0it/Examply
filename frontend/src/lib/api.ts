@@ -1,0 +1,173 @@
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+async function apiRequest<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`
+
+  const config: RequestInit = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+    ...options,
+  }
+
+  try {
+    const response = await fetch(url, config)
+
+    if (!response.ok) {
+      throw new ApiError(response.status, `HTTP error! status: ${response.status}`)
+    }
+
+    return await response.json()
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError(0, `Network error: ${error}`)
+  }
+}
+
+// Health check
+export const healthCheck = () => apiRequest('/health')
+
+// Problems
+export const getProblems = (params?: {
+  subject?: string
+  topic?: string
+  difficulty?: string
+  search?: string
+  page?: number
+  size?: number
+}) => {
+  const searchParams = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+  }
+  return apiRequest(`/problems?${searchParams}`)
+}
+
+export const getProblem = (id: number, includeAnswer: boolean = false) =>
+  apiRequest(`/problems/${id}?include_answer=${includeAnswer}`)
+
+export const skipProblem = (id: number) =>
+  apiRequest(`/problems/${id}/skip`, { method: 'POST' })
+
+export const toggleBookmark = (id: number) =>
+  apiRequest(`/problems/${id}/bookmark`, { method: 'POST' })
+
+// Sessions
+export const createSession = (data: {
+  name?: string
+  subject_filter?: string
+  topic_filter?: string
+  difficulty_filter?: string
+  tag_filters?: string[]
+  max_problems?: number
+}) => apiRequest('/sessions', {
+  method: 'POST',
+  body: JSON.stringify(data)
+})
+
+export const getSession = (id: number) =>
+  apiRequest(`/sessions/${id}`)
+
+export const getNextProblem = (sessionId: number) =>
+  apiRequest(`/sessions/${sessionId}/next`)
+
+// Attempts
+export const submitAttempt = (data: {
+  problem_id: number
+  session_id?: number
+  answer_index?: number
+  answer_text?: string
+  time_taken_seconds?: number
+}) => apiRequest('/attempts', {
+  method: 'POST',
+  body: JSON.stringify(data)
+})
+
+// Reviews
+export const getWrongAnswers = (params?: {
+  session_id?: number
+  page?: number
+  size?: number
+}) => {
+  const searchParams = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+  }
+  return apiRequest(`/reviews/wrong?${searchParams}`)
+}
+
+export const getBookmarkedProblems = (params?: {
+  session_id?: number
+  page?: number
+  size?: number
+}) => {
+  const searchParams = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+  }
+  return apiRequest(`/reviews/bookmarked?${searchParams}`)
+}
+
+export const getSkippedProblems = (params?: {
+  session_id?: number
+  page?: number
+  size?: number
+}) => {
+  const searchParams = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+  }
+  return apiRequest(`/reviews/skipped?${searchParams}`)
+}
+
+// Statistics
+export const getOverviewStats = () =>
+  apiRequest('/stats/overview')
+
+export const getProgressStats = () =>
+  apiRequest('/stats/progress')
+
+// Admin
+export const importPdf = (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return apiRequest('/admin/import', {
+    method: 'POST',
+    headers: {}, // Remove Content-Type to let browser set it with boundary
+    body: formData
+  })
+}
+
+export const getImportStatus = (jobId: string) =>
+  apiRequest(`/admin/import/${jobId}/status`)
+
+export const getImportJobs = () =>
+  apiRequest('/admin/import/jobs')

@@ -1,0 +1,18 @@
+{
+  "name": "examply",
+  "version": "0.1.0",
+  "description": "Problem-solving flashcard web application",
+  "keywords": [
+    "flashcard",
+    "education",
+    "pdf",
+    "ocr",
+    "learning"
+  ],
+  "author": "Examply Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/examply.git"
+  }
+}

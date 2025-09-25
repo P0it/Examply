@@ -25,7 +25,16 @@ async function apiRequest<T>(
     const response = await fetch(url, config)
 
     if (!response.ok) {
-      throw new ApiError(response.status, `HTTP error! status: ${response.status}`)
+      let errorMessage = `HTTP error! status: ${response.status}`
+      try {
+        const errorData = await response.json()
+        if (errorData.detail) {
+          errorMessage = errorData.detail
+        }
+      } catch {
+        // If response is not JSON, use default message
+      }
+      throw new ApiError(response.status, errorMessage)
     }
 
     return await response.json()
@@ -157,6 +166,8 @@ export const getProgressStats = () =>
 // Upload and Import
 export interface UploadResponse {
   job_id: string
+  encrypted?: boolean
+  needs_password?: boolean
   message?: string
 }
 
@@ -171,9 +182,15 @@ export interface ImportStatus {
   finished_at?: string
 }
 
-export const uploadPdf = (file: File): Promise<UploadResponse> => {
+export const uploadPdf = (file: File, password?: string, sessionName?: string): Promise<UploadResponse> => {
   const formData = new FormData()
   formData.append('file', file)
+  if (password) {
+    formData.append('password', password)
+  }
+  if (sessionName) {
+    formData.append('session_name', sessionName)
+  }
 
   return apiRequest('/upload', {
     method: 'POST',
@@ -190,6 +207,20 @@ export const getImportStatus = (jobId: string): Promise<ImportStatus> =>
 
 export const getImportJobs = (limit: number = 10) =>
   apiRequest(`/import/jobs?limit=${limit}`)
+
+export const deleteImportJob = (jobId: string) =>
+  apiRequest(`/import/${jobId}`, { method: 'DELETE' })
+
+export const unlockEncryptedPdf = (jobId: string, password: string) => {
+  const formData = new FormData()
+  formData.append('password', password)
+
+  return apiRequest(`/upload/${jobId}/unlock`, {
+    method: 'POST',
+    headers: {}, // Remove Content-Type to let browser set it with boundary
+    body: formData
+  })
+}
 
 // Sessions
 export interface SessionResponse {
@@ -239,6 +270,9 @@ export const getSessionDetail = (sessionId: number) =>
 
 export const startSession = (sessionId: number) =>
   apiRequest(`/sessions/${sessionId}/start`, { method: 'POST' })
+
+export const deleteSession = (sessionId: number) =>
+  apiRequest(`/sessions/${sessionId}`, { method: 'DELETE' })
 
 // Admin
 export const importPdf = (file: File) => {

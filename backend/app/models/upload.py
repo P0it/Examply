@@ -23,6 +23,7 @@ class SourceDoc(SQLModel, table=True):
     size: int = Field(description="File size in bytes")
     sha256: str = Field(description="SHA256 hash for deduplication")
     storage_path: str = Field(description="Path where file is stored")
+    password: Optional[str] = Field(default=None, description="Password for encrypted PDFs")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -30,6 +31,7 @@ class ImportJob(SQLModel, table=True):
     """Import job model for tracking PDF processing."""
     id: str = Field(default_factory=lambda: str(ulid.ULID()), primary_key=True)
     source_doc_id: str = Field(foreign_key="sourcedoc.id")
+    session_name: Optional[str] = Field(default=None, description="Custom session name")
     status: ImportStatus = Field(default=ImportStatus.QUEUED)
     progress: int = Field(default=0, description="Progress percentage 0-100")
     stage: str = Field(default="", description="Current processing stage")

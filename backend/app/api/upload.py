@@ -4,15 +4,17 @@ Upload and import API endpoints.
 import os
 import hashlib
 import shutil
+import fitz  # PyMuPDF
 from datetime import datetime
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
 from app.db.database import engine
 from app.models import SourceDoc, ImportJob, ImportStatus
 from app.services.import_service import ImportService
+from app.utils.pdf_security import PDFSecurityHandler
 
 router = APIRouter()
 import_service = ImportService()
@@ -35,8 +37,38 @@ def calculate_sha256(file_path: str) -> str:
     return sha256_hash.hexdigest()
 
 
+def check_pdf_encryption(file_path: str, password: Optional[str] = None) -> Dict[str, Any]:
+    """Check if PDF is encrypted and validate password if provided."""
+    try:
+        doc = fitz.open(file_path)
+
+        # Check if PDF requires password
+        if doc.needs_pass:
+            if password:
+                # Try to authenticate with provided password
+                auth_result = doc.authenticate(password)
+                doc.close()
+                if auth_result:
+                    return {"encrypted": True, "password_valid": True, "message": "비밀번호가 올바릅니다."}
+                else:
+                    return {"encrypted": True, "password_valid": False, "message": "비밀번호가 올바르지 않습니다."}
+            else:
+                doc.close()
+                return {"encrypted": True, "password_valid": False, "message": "PDF 파일이 잠겨있습니다. 비밀번호를 입력해주세요."}
+        else:
+            doc.close()
+            return {"encrypted": False, "password_valid": True, "message": "암호화되지 않은 PDF입니다."}
+
+    except Exception as e:
+        return {"encrypted": None, "password_valid": False, "message": f"PDF 파일을 확인할 수 없습니다: {str(e)}"}
+
+
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    password: Optional[str] = Form(None),
+    session_name: Optional[str] = Form(None)
+):
     """Upload a PDF file and return job_id."""
 
     # Validate file type
@@ -73,17 +105,37 @@ async def upload_pdf(file: UploadFile = File(...)):
             content = await file.read()
             buffer.write(content)
 
+        # Check PDF encryption status (without password validation)
+        encryption_status = PDFSecurityHandler.check_encryption(file_path)
+
+        # If encrypted but no password provided, return special status
+        if encryption_status["encrypted"] and not password:
+            # Create source document even for encrypted PDFs
+            pass  # Continue to create the document
+        elif encryption_status["encrypted"] and password:
+            # Validate password if provided
+            password_validation = PDFSecurityHandler.validate_password(file_path, password)
+            if not password_validation["valid"]:
+                os.remove(file_path)
+                raise HTTPException(
+                    status_code=400,
+                    detail=password_validation["message"]
+                )
+
         # Calculate SHA256
         sha256 = calculate_sha256(file_path)
 
-        # Check for duplicate files
+        # Check for duplicate files (same content AND same filename)
         with Session(engine) as session:
             existing_doc = session.exec(
-                select(SourceDoc).where(SourceDoc.sha256 == sha256)
+                select(SourceDoc).where(
+                    SourceDoc.sha256 == sha256,
+                    SourceDoc.filename == file.filename
+                )
             ).first()
 
             if existing_doc:
-                # Remove uploaded file since we have a duplicate
+                # Remove uploaded file since we have an exact duplicate (same content + same name)
                 os.remove(file_path)
 
                 # Check if there's an existing job for this document
@@ -108,19 +160,39 @@ async def upload_pdf(file: UploadFile = File(...)):
                 content_type=file.content_type,
                 size=file_size,
                 sha256=sha256,
-                storage_path=file_path
+                storage_path=file_path,
+                password=None  # Never store passwords
             )
             session.add(source_doc)
             session.commit()
             session.refresh(source_doc)
 
             # Create import job
-            import_job = ImportJob(source_doc_id=source_doc.id)
+            import_job = ImportJob(
+                source_doc_id=source_doc.id,
+                session_name=session_name
+            )
             session.add(import_job)
             session.commit()
             session.refresh(import_job)
 
-            return {"job_id": import_job.id}
+            response = {"job_id": import_job.id}
+
+            # Add encryption status to response
+            if encryption_status["encrypted"]:
+                response.update({
+                    "encrypted": True,
+                    "needs_password": not bool(password),
+                    "message": "PDF is encrypted" if not password else "Password validated"
+                })
+            else:
+                response.update({
+                    "encrypted": False,
+                    "needs_password": False,
+                    "message": "PDF is not encrypted"
+                })
+
+            return response
 
     except Exception as e:
         # Clean up uploaded file on error
@@ -137,7 +209,16 @@ async def start_import(job_id: str, background_tasks: BackgroundTasks):
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        if job.status != ImportStatus.QUEUED:
+        # Allow restart if job failed
+        if job.status == ImportStatus.ERROR:
+            job.status = ImportStatus.QUEUED
+            job.progress = 0
+            job.stage = "대기 중..."
+            job.error_message = None
+            job.logs = []
+            job.finished_at = None
+            job.add_log("Job reset after error")
+        elif job.status != ImportStatus.QUEUED:
             raise HTTPException(status_code=400, detail="Job already started or completed")
 
         # Update job status
@@ -147,7 +228,7 @@ async def start_import(job_id: str, background_tasks: BackgroundTasks):
         session.commit()
 
         # Start background processing
-        background_tasks.add_task(import_service.process_import_job, job_id)
+        background_tasks.add_task(import_service.process_import_job, job_id, job.session_name)
 
         return {"message": "Import started", "job_id": job_id}
 
@@ -192,3 +273,83 @@ async def list_import_jobs(limit: int = 10):
             }
             for job in jobs
         ]
+
+
+@router.delete("/import/{job_id}")
+async def delete_import_job(job_id: str):
+    """Delete an import job and its associated source document."""
+    with Session(engine) as session:
+        job = session.get(ImportJob, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Get source document
+        source_doc = session.get(SourceDoc, job.source_doc_id)
+
+        # Delete the job first
+        session.delete(job)
+
+        # If source document exists and no other jobs reference it, delete it too
+        if source_doc:
+            other_jobs = session.exec(
+                select(ImportJob).where(
+                    ImportJob.source_doc_id == source_doc.id,
+                    ImportJob.id != job_id
+                )
+            ).all()
+
+            if not other_jobs:
+                # Delete the physical file if it exists
+                if source_doc.storage_path and os.path.exists(source_doc.storage_path):
+                    try:
+                        os.remove(source_doc.storage_path)
+                    except Exception as e:
+                        print(f"Failed to delete file {source_doc.storage_path}: {e}")
+
+                # Delete the source document record
+                session.delete(source_doc)
+
+        session.commit()
+        return {"message": "Job deleted successfully"}
+
+
+@router.post("/upload/{job_id}/unlock")
+async def unlock_encrypted_pdf(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    password: str = Form(...)
+):
+    """Unlock encrypted PDF with password and start processing."""
+    with Session(engine) as session:
+        job = session.get(ImportJob, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        source_doc = session.get(SourceDoc, job.source_doc_id)
+        if not source_doc:
+            raise HTTPException(status_code=404, detail="Source document not found")
+
+        # Validate password
+        password_validation = PDFSecurityHandler.validate_password(source_doc.storage_path, password)
+        if not password_validation["valid"]:
+            raise HTTPException(status_code=400, detail=password_validation["message"])
+
+        # Update job status and start processing
+        job.status = ImportStatus.RUNNING
+        job.add_log("Password validated, starting import process")
+        session.add(job)
+        session.commit()
+
+        # Start background processing with password (passed securely, not stored)
+        background_tasks.add_task(
+            import_service.process_import_job_with_password,
+            job_id,
+            password,
+            job.session_name
+        )
+
+        return {
+            "message": "PDF unlocked successfully",
+            "job_id": job_id,
+            "status": "processing"
+        }

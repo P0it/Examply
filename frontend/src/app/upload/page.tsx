@@ -7,22 +7,26 @@ import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { UploadDropzone } from "@/components/upload-dropzone"
 import { motion, AnimatePresence } from "framer-motion"
-import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, BookOpen } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
-import { uploadPdf, startImport, getImportStatus } from "@/lib/api"
+import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, BookOpen, Lock, Key } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import toast from "react-hot-toast"
+import { uploadPdf, startImport, getImportStatus, unlockEncryptedPdf } from "@/lib/api"
 
 interface UploadStatus {
   jobId?: string
-  status: 'idle' | 'uploading' | 'queued' | 'running' | 'done' | 'error'
+  status: 'idle' | 'uploading' | 'needs_password' | 'queued' | 'running' | 'done' | 'error'
   progress: number
   stage: string
   logs: string[]
   extractedCount: number
   errorMessage?: string
+  encrypted?: boolean
+  needsPassword?: boolean
 }
 
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [password, setPassword] = useState('')
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     status: 'idle',
     progress: 0,
@@ -30,7 +34,6 @@ export default function UploadPage() {
     logs: [],
     extractedCount: 0
   })
-  const { toast } = useToast()
 
   const handleFileSelect = useCallback((file: File) => {
     setSelectedFile(file)
@@ -50,26 +53,38 @@ export default function UploadPage() {
       setUploadStatus(prev => ({ ...prev, status: 'uploading', progress: 0, stage: '파일 업로드 중...' }))
 
       // Upload file
-      const { job_id } = await uploadPdf(selectedFile)
+      const uploadResponse = await uploadPdf(selectedFile)
+
+      // Check if file is encrypted and needs password
+      if (uploadResponse.encrypted && uploadResponse.needs_password) {
+        setUploadStatus(prev => ({
+          ...prev,
+          jobId: uploadResponse.job_id,
+          status: 'needs_password',
+          progress: 10,
+          stage: '암호화된 PDF입니다. 비밀번호를 입력해주세요.',
+          encrypted: true,
+          needsPassword: true
+        }))
+        toast.error("이 PDF는 암호화되어 있습니다. 비밀번호를 입력해주세요.")
+        return
+      }
 
       setUploadStatus(prev => ({
         ...prev,
-        jobId: job_id,
+        jobId: uploadResponse.job_id,
         status: 'queued',
         progress: 5,
         stage: '업로드 완료, 처리 대기 중...'
       }))
 
-      // Start import process
-      await startImport(job_id)
+      // Start import process for non-encrypted files
+      await startImport(uploadResponse.job_id)
 
       // Start polling for status
-      pollJobStatus(job_id)
+      pollJobStatus(uploadResponse.job_id)
 
-      toast({
-        title: "업로드 성공",
-        description: "PDF 분석을 시작합니다."
-      })
+      toast.success("PDF 분석을 시작합니다.")
 
     } catch (error) {
       console.error('Upload error:', error)
@@ -78,11 +93,7 @@ export default function UploadPage() {
         status: 'error',
         errorMessage: error instanceof Error ? error.message : 'Unknown error'
       }))
-      toast({
-        title: "업로드 실패",
-        description: error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.",
-        variant: "destructive"
-      })
+      toast.error(error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.")
     }
   }
 
@@ -105,16 +116,9 @@ export default function UploadPage() {
         if (status.status === 'running' || status.status === 'queued') {
           setTimeout(poll, 2000) // Poll every 2 seconds
         } else if (status.status === 'done') {
-          toast({
-            title: "분석 완료",
-            description: `${status.extracted_count}개의 문제가 추출되었습니다.`
-          })
+          toast.success(`${status.extracted_count}개의 문제가 추출되었습니다.`)
         } else if (status.status === 'error') {
-          toast({
-            title: "분석 실패",
-            description: status.error_message || "알 수 없는 오류가 발생했습니다.",
-            variant: "destructive"
-          })
+          toast.error(status.error_message || "알 수 없는 오류가 발생했습니다.")
         }
       } catch (error) {
         console.error('Polling error:', error)
@@ -130,8 +134,47 @@ export default function UploadPage() {
     }
   }
 
+  const handlePasswordSubmit = async () => {
+    if (!uploadStatus.jobId || !password.trim()) {
+      toast.error("비밀번호를 입력해주세요.")
+      return
+    }
+
+    try {
+      setUploadStatus(prev => ({ ...prev, status: 'uploading', progress: 15, stage: '비밀번호 확인 중...' }))
+
+      // Unlock encrypted PDF
+      await unlockEncryptedPdf(uploadStatus.jobId, password)
+
+      setUploadStatus(prev => ({
+        ...prev,
+        status: 'queued',
+        progress: 20,
+        stage: '암호화 해제 완료, 처리 시작 중...'
+      }))
+
+      // Clear password from memory
+      setPassword('')
+
+      // Start polling for status
+      pollJobStatus(uploadStatus.jobId)
+
+      toast.success("PDF 잠금이 해제되었습니다. 분석을 시작합니다.")
+
+    } catch (error) {
+      console.error('Password unlock error:', error)
+      setUploadStatus(prev => ({
+        ...prev,
+        status: 'needs_password',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      }))
+      toast.error(error instanceof Error ? error.message : "비밀번호가 올바르지 않습니다.")
+    }
+  }
+
   const resetUpload = () => {
     setSelectedFile(null)
+    setPassword('')
     setUploadStatus({
       status: 'idle',
       progress: 0,
@@ -248,9 +291,11 @@ export default function UploadPage() {
                       </CardTitle>
                       <Badge variant={
                         uploadStatus.status === 'done' ? 'default' :
-                        uploadStatus.status === 'error' ? 'destructive' : 'secondary'
+                        uploadStatus.status === 'error' ? 'destructive' :
+                        uploadStatus.status === 'needs_password' ? 'secondary' : 'secondary'
                       }>
                         {uploadStatus.status === 'uploading' ? '업로드 중' :
+                         uploadStatus.status === 'needs_password' ? '비밀번호 필요' :
                          uploadStatus.status === 'queued' ? '대기 중' :
                          uploadStatus.status === 'running' ? '분석 중' :
                          uploadStatus.status === 'done' ? '완료' : '오류'}
@@ -265,6 +310,45 @@ export default function UploadPage() {
                       </div>
                       <Progress value={uploadStatus.progress} className="h-3" />
                     </div>
+
+                    {uploadStatus.status === 'needs_password' && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="p-4 bg-yellow-50 dark:bg-yellow-950/20 rounded-lg border border-yellow-200 dark:border-yellow-800"
+                      >
+                        <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300 mb-3">
+                          <Lock className="h-5 w-5" />
+                          <span className="font-medium">암호화된 PDF 파일</span>
+                        </div>
+                        <p className="text-sm text-yellow-600 dark:text-yellow-400 mb-3">
+                          이 PDF 파일은 암호화되어 있습니다. 비밀번호를 입력해주세요.
+                        </p>
+                        <div className="flex gap-2">
+                          <Input
+                            type="password"
+                            placeholder="비밀번호 입력"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            onKeyPress={(e) => {
+                              if (e.key === 'Enter') {
+                                handlePasswordSubmit()
+                              }
+                            }}
+                            className="flex-1"
+                          />
+                          <Button onClick={handlePasswordSubmit} disabled={!password.trim()}>
+                            <Key className="mr-2 h-4 w-4" />
+                            확인
+                          </Button>
+                        </div>
+                        {uploadStatus.errorMessage && (
+                          <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                            {uploadStatus.errorMessage}
+                          </p>
+                        )}
+                      </motion.div>
+                    )}
 
                     {uploadStatus.status === 'done' && (
                       <motion.div

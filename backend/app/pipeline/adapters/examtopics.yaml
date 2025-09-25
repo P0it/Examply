@@ -1,0 +1,83 @@
+# ExamTopics specific adapter for SAA-C03 and similar exam formats
+# Optimized for Q1, Q2, Q3... format with A. B. C. D. choices
+
+name: "examtopics"
+description: "ExamTopics parser for AWS SAA-C03 Korean and similar exam formats"
+priority: 10  # High priority to match before generic
+
+# Question detection patterns (regex) - Very specific for ExamTopics
+question_patterns:
+  - '^Q\d+\s*$'                        # "Q1", "Q2", etc. (standalone line)
+  - '^Q\d+\s+'                         # "Q1 " with space (rare but possible)
+
+# Multiple choice markers - ExamTopics uses standard A. B. C. D. format
+choice_markers:
+  - ['A.', 'B.', 'C.', 'D.', 'E.']     # Standard format with dots
+  - ['A)', 'B)', 'C)', 'D)', 'E)']     # Alternative format (if exists)
+
+# Answer key patterns - ExamTopics has very consistent format
+answer_patterns:
+  - '^Answer:\s*([A-E])\s*$'            # "Answer: A" format (most common)
+  - '^Answer\s*:\s*([A-E])\s*$'         # "Answer : A" with space
+  - '^정답\s*[:：]\s*([A-E])\s*$'        # Korean answer format
+  - '^답\s*[:：]\s*([A-E])\s*$'          # Short Korean answer
+
+# Explanation markers - ExamTopics may have explanations
+explanation_markers:
+  - '^Explanation\s*[:：]'
+  - '^해설\s*[:：]'
+  - '^풀이\s*[:：]'
+  - '^설명\s*[:：]'
+
+# Text cleaning rules - Remove ExamTopics specific noise
+header_footer_rules:
+  - '^.*examtopics\.com.*$'             # Remove ExamTopics URLs
+  - '^https?://.*$'                     # Remove all URLs
+  - '^.*Page\s+\d+.*$'                  # Remove page numbers
+  - '^.*Exam\s*:\s*SAA-C03.*$'          # Remove exam headers
+  - '^.*Title\s*:\s*Amazon.*$'          # Remove title lines
+  - '^.*Vendor\s*:\s*Amazon.*$'         # Remove vendor lines
+  - '^.*Version\s*:\s*.*$'              # Remove version lines
+  - '^\s*\d+\s*$'                       # Standalone numbers
+  - '^.*Copyright.*$'                   # Copyright notices
+  - '^.*저작권.*$'                       # Korean copyright
+
+# Difficulty indicators (ExamTopics doesn't use these, but keep for compatibility)
+difficulty_patterns:
+  'Easy': 'easy'
+  'Medium': 'medium'
+  'Hard': 'hard'
+
+# Subject detection - AWS specific
+subject_patterns:
+  'AWS': 'aws'
+  'Amazon': 'aws'
+  'SAA-C03': 'aws_solutions_architect'
+  'Solutions Architect': 'aws_solutions_architect'
+  'EC2': 'aws_compute'
+  'S3': 'aws_storage'
+  'VPC': 'aws_networking'
+  'IAM': 'aws_security'
+  'Lambda': 'aws_serverless'
+  'RDS': 'aws_database'
+  'CloudFormation': 'aws_infrastructure'
+
+# Processing hints - Optimized for ExamTopics format
+hints:
+  two_column: false                     # Single column layout
+  min_question_length: 10               # Minimum characters for question
+  max_choices: 5                        # A, B, C, D, E maximum
+  min_choices: 2                        # At least 2 choices
+  case_sensitive_answers: false         # Answer matching is case insensitive
+  max_lines_between_question_and_choices: 20  # Allow reasonable spacing
+  max_lines_per_problem: 50             # ExamTopics problems can be long
+  strict_answer_format: true            # ExamTopics has very consistent format
+  remove_urls: true                     # Always remove discussion URLs
+  split_on_answer: true                 # Split problems at Answer: line
+
+# ExamTopics specific processing rules
+examtopics_specific:
+  question_number_only_line: true       # Q1, Q2 are usually on separate lines
+  answer_always_present: true           # Every question should have Answer: line
+  discussion_url_marker: true           # Questions often end with discussion URLs
+  korean_mixed_content: true            # Content is Korean with English terms

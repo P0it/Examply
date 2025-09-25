@@ -16,7 +16,13 @@
       "Bash(pip install:*)",
       "Bash(npm run dev:*)",
       "Bash(netstat:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(dir:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(del \"C:\\GitHub\\Testify\\frontend\\src\\hooks\\use-toast.tsx\")",
+      "Bash(taskkill:*)",
+      "Bash(del examply_v2.db)",
+      "Bash(if exist examply_v2.db del examply_v2.db)"
     ],
     "deny": [],
     "ask": []

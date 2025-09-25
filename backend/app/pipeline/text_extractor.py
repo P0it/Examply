@@ -26,7 +26,8 @@ class TextExtractor:
     async def extract_text(
         self,
         pdf_path: str,
-        progress_callback: Optional[Callable[[int, str], None]] = None
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        password: Optional[str] = None
     ) -> str:
         """Extract text from PDF with progress reporting."""
 
@@ -34,8 +35,28 @@ class TextExtractor:
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
         try:
-            # Open PDF
-            doc = fitz.open(pdf_path)
+            # Try to open PDF
+            doc = None
+            try:
+                doc = fitz.open(pdf_path)
+                if doc.needs_pass:
+                    if not password:
+                        doc.close()
+                        raise ValueError("PDF가 암호화되어 있습니다. 비밀번호를 입력해주세요.")
+                    auth_result = doc.authenticate(password)
+                    if not auth_result:
+                        doc.close()
+                        raise ValueError("비밀번호가 올바르지 않습니다.")
+            except Exception as e:
+                if doc:
+                    doc.close()
+                # Check if it's a password-related error
+                error_msg = str(e).lower()
+                if any(keyword in error_msg for keyword in ['password', 'encrypted', 'authentication', 'decrypt']):
+                    raise ValueError("PDF가 암호화되어 있습니다. 올바른 비밀번호를 입력해주세요.")
+                else:
+                    raise ValueError(f"PDF 파일을 열 수 없습니다: {str(e)}")
+
             total_pages = len(doc)
 
             if progress_callback:

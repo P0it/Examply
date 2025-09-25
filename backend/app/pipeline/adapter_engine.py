@@ -93,30 +93,51 @@ class AdapterEngine:
 
         return score
 
-    def parse_problems(self, text: str, filename: str = "") -> List[ParsedProblem]:
+    def parse_problems(self, text: str, filename: str = "", progress_callback=None) -> List[ParsedProblem]:
         """Parse problems from text using the best adapter."""
         if not text.strip():
             return []
 
         adapter = self.select_best_adapter(text)
         if not adapter:
+            print(f"No suitable adapter found for {filename}")
             return []
+
+        print(f"Using adapter: {adapter.get('name', 'unknown')} for {filename}")
 
         # Clean text first
         cleaned_text = self._clean_text(text, adapter)
 
         # Split into problem blocks
         problem_blocks = self._split_into_problems(cleaned_text, adapter)
+        total_blocks = len(problem_blocks)
+
+        print(f"Found {total_blocks} potential problem blocks in {filename}")
 
         # Parse each problem block
         problems = []
+        failed_blocks = []
+
         for i, block in enumerate(problem_blocks):
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, total_blocks, f"분석 중 {i + 1}/{total_blocks}")
+
             try:
                 problem = self._parse_problem_block(block, adapter, i + 1)
                 if problem:
                     problems.append(problem)
+                else:
+                    failed_blocks.append((i + 1, "No problem extracted"))
             except Exception as e:
                 print(f"Failed to parse problem block {i + 1}: {e}")
+                failed_blocks.append((i + 1, str(e)))
+                # Log first 200 chars of failed block for debugging
+                print(f"Failed block preview: {block[:200]}...")
+
+        print(f"Successfully parsed {len(problems)} problems out of {total_blocks} blocks")
+        if failed_blocks:
+            print(f"Failed blocks: {failed_blocks[:10]}...")  # Show first 10 failures
 
         return problems
 
@@ -150,47 +171,62 @@ class AdapterEngine:
         if not question_patterns:
             return [text]
 
-        # Find all question starts
+        # Find all question starts with their positions and patterns
         problem_starts = []
         for pattern in question_patterns:
             for match in re.finditer(pattern, text, re.MULTILINE):
-                problem_starts.append(match.start())
+                problem_starts.append({
+                    'position': match.start(),
+                    'match': match,
+                    'pattern': pattern
+                })
 
         if not problem_starts:
             return [text]
 
         # Sort by position
-        problem_starts.sort()
+        problem_starts.sort(key=lambda x: x['position'])
+
+        # Remove duplicates (same position with different patterns)
+        unique_starts = []
+        for start in problem_starts:
+            if not unique_starts or start['position'] != unique_starts[-1]['position']:
+                unique_starts.append(start)
 
         # Split into blocks
         blocks = []
-        for i, start in enumerate(problem_starts):
-            end = problem_starts[i + 1] if i + 1 < len(problem_starts) else len(text)
-            block = text[start:end].strip()
-            if block:
+        for i, start in enumerate(unique_starts):
+            start_pos = start['position']
+            end_pos = unique_starts[i + 1]['position'] if i + 1 < len(unique_starts) else len(text)
+
+            block = text[start_pos:end_pos].strip()
+            # Reduced minimum block size to capture shorter problems
+            if block and len(block) > 10:
                 blocks.append(block)
+
+        print(f"DEBUG: Found {len(blocks)} problem blocks from text of length {len(text)}")
+        for i, block in enumerate(blocks[:3]):  # Show first 3 blocks for debugging
+            print(f"Block {i+1} preview: {block[:100]}...")
 
         return blocks
 
     def _parse_problem_block(self, block: str, adapter: Dict[str, Any], problem_number: int) -> Optional[ParsedProblem]:
         """Parse a single problem block."""
-        lines = block.split('\n')
+        lines = [line.strip() for line in block.split('\n') if line.strip()]
         if not lines:
             return None
 
-        # Extract question text (first line after cleaning question number)
-        question_line = lines[0]
-        question_patterns = adapter.get('question_patterns', [])
-        for pattern in question_patterns:
-            question_line = re.sub(pattern, '', question_line).strip()
-
-        if len(question_line) < adapter.get('hints', {}).get('min_question_length', 10):
-            return None
-
-        # Find choices
+        # Find choices first to properly separate question from choices
         choices, choice_lines = self._extract_choices(block, adapter)
-        if len(choices) < adapter.get('hints', {}).get('min_choices', 2):
-            return None
+
+        # More lenient choice validation - allow problems with at least 2 choices
+        min_choices = adapter.get('hints', {}).get('min_choices', 2)
+        if len(choices) < min_choices:
+            # Try alternative extraction if initial failed
+            choices = self._extract_choices_alternative(block, adapter)
+            if len(choices) < min_choices:
+                print(f"Problem {problem_number}: Not enough choices found ({len(choices)})")
+                return None
 
         # Extract answer
         correct_answer_index = self._extract_answer(block, adapter, choices)
@@ -202,16 +238,39 @@ class AdapterEngine:
         subject = self._extract_subject(block, adapter)
         difficulty = self._extract_difficulty(block, adapter)
 
-        # Build question text (everything before choices)
+        # Build question text (everything before first choice marker)
         question_parts = []
+        choice_markers = adapter.get('choice_markers', [])
+
         for line in lines:
-            if any(self._line_contains_choice_marker(line, marker_set) for marker_set in adapter.get('choice_markers', [])):
+            # Stop at first choice marker
+            is_choice_line = any(self._line_contains_choice_marker(line, marker_set) for marker_set in choice_markers)
+            if is_choice_line:
                 break
-            # Skip the first line if it's just the question number
-            if line != lines[0] or question_line:
-                question_parts.append(question_line if line == lines[0] else line)
+
+            # Clean question number pattern from first line
+            if line == lines[0]:
+                question_patterns = adapter.get('question_patterns', [])
+                for pattern in question_patterns:
+                    line = re.sub(pattern, '', line).strip()
+
+            # Skip answer and explanation lines in question text
+            if self._is_answer_line(line, adapter) or self._is_explanation_line(line, adapter):
+                continue
+
+            if line:  # Only add non-empty lines
+                question_parts.append(line)
 
         question_text = '\n'.join(question_parts).strip()
+
+        # More flexible question validation
+        min_question_length = adapter.get('hints', {}).get('min_question_length', 5)
+        if len(question_text) < min_question_length:
+            # Try to salvage by using full block text if too short
+            if len(block) > min_question_length:
+                question_text = block[:200]  # Use first 200 chars as question
+            else:
+                return None
 
         return ParsedProblem(
             question_text=question_text,
@@ -227,7 +286,7 @@ class AdapterEngine:
     def _extract_choices(self, block: str, adapter: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         """Extract choices from the block."""
         choice_markers = adapter.get('choice_markers', [])
-        lines = block.split('\n')
+        lines = [line.strip() for line in block.split('\n') if line.strip()]
         choices = []
         choice_lines = []
 
@@ -236,19 +295,54 @@ class AdapterEngine:
             found_lines = []
 
             for line in lines:
+                line_stripped = line.strip()
                 for marker in marker_set:
-                    if line.strip().startswith(marker):
-                        choice_text = line.strip()[len(marker):].strip()
-                        if choice_text:
+                    if line_stripped.startswith(marker):
+                        choice_text = line_stripped[len(marker):].strip()
+                        # Only add if choice text is meaningful (not just a marker)
+                        if choice_text and len(choice_text) > 1:
                             found_choices.append(choice_text)
                             found_lines.append(line)
+                        break  # Found marker, no need to check other markers for this line
 
-            # Use the marker set that found the most choices
-            if len(found_choices) > len(choices):
+            # Use the marker set that found the most choices (and at least 2)
+            if len(found_choices) >= 2 and len(found_choices) > len(choices):
                 choices = found_choices
                 choice_lines = found_lines
 
         return choices, choice_lines
+
+    def _extract_choices_alternative(self, block: str, adapter: Dict[str, Any]) -> List[str]:
+        """Alternative choice extraction using more flexible patterns."""
+        lines = [line.strip() for line in block.split('\n') if line.strip()]
+        choices = []
+
+        # Look for numbered patterns like "1)" or "1." at start of lines
+        numbered_pattern = r'^(\d+[.)])\s*(.+)'
+
+        for line in lines:
+            match = re.match(numbered_pattern, line)
+            if match:
+                choice_text = match.group(2).strip()
+                if choice_text and len(choice_text) > 1:
+                    choices.append(choice_text)
+
+        # If numbered didn't work, try to find lines that look like choices
+        if len(choices) < 2:
+            choices = []
+            # Look for lines that are likely choices based on structure
+            for line in lines:
+                line = line.strip()
+                # Skip obviously non-choice lines
+                if (len(line) > 5 and len(line) < 200 and  # Reasonable length
+                    not re.match(r'^\d+\.', line) and     # Not a question number
+                    not any(keyword in line.lower() for keyword in ['정답', '답', '해설', '풀이', '설명']) and
+                    not line.endswith('?')):              # Not a question
+                    choices.append(line)
+                    if len(choices) >= 10:  # Limit to prevent over-extraction
+                        break
+
+        return choices[:adapter.get('hints', {}).get('max_choices', 5)]  # Limit choices
 
     def _line_contains_choice_marker(self, line: str, marker_set: List[str]) -> bool:
         """Check if line contains any choice marker from the set."""
@@ -306,3 +400,19 @@ class AdapterEngine:
                 return difficulty
 
         return None
+
+    def _is_answer_line(self, line: str, adapter: Dict[str, Any]) -> bool:
+        """Check if line contains answer information."""
+        answer_patterns = adapter.get('answer_patterns', [])
+        for pattern in answer_patterns:
+            if re.search(pattern, line, re.IGNORECASE):
+                return True
+        return False
+
+    def _is_explanation_line(self, line: str, adapter: Dict[str, Any]) -> bool:
+        """Check if line contains explanation markers."""
+        explanation_markers = adapter.get('explanation_markers', [])
+        for marker in explanation_markers:
+            if marker in line:
+                return True
+        return False

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { UploadDropzone } from "@/components/upload-dropzone"
-import { BookOpen, Brain, Upload, Play, Clock, CheckCircle, FileText, Plus, Trash2 } from "lucide-react"
+import { BookOpen, Upload, Play, Clock, CheckCircle, FileText, Plus, Trash2 } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { motion, AnimatePresence } from "framer-motion"
 import toast from "react-hot-toast"
@@ -250,6 +250,298 @@ export default function HomePage() {
       default: return '알 수 없음'
     }
   }
+
+  // Upload card — the hero when there are no sessions yet, a secondary tool once sessions exist
+  const uploadCard = (
+    <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Upload className="h-5 w-5 text-primary" />
+          빠른 업로드
+        </CardTitle>
+        <CardDescription>
+          PDF 문제집을 드래그하여 즉시 학습 세션을 만드세요
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          <UploadDropzone onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+
+          {/* Session name input */}
+          <div className="space-y-2">
+            <Label htmlFor="sessionName" className="text-sm font-medium">
+              학습 세션명 <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="sessionName"
+              type="text"
+              placeholder="예: 2024년 기말고사 대비"
+              value={sessionName}
+              onChange={(e) => setSessionName(e.target.value)}
+              className="bg-background/50"
+            />
+            <p className="text-xs text-muted-foreground">
+              생성할 학습 세션의 이름을 입력하세요
+            </p>
+          </div>
+
+          {/* Password input for encrypted PDFs */}
+          <div className="space-y-2">
+            <Label htmlFor="password" className="text-sm font-medium">
+              PDF 비밀번호 (선택사항)
+            </Label>
+            <Input
+              id="password"
+              type="password"
+              placeholder="암호화된 PDF인 경우 비밀번호를 입력하세요"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="bg-background/50"
+            />
+            <p className="text-xs text-muted-foreground">
+              PDF가 암호화되어 있지 않다면 비워두세요
+            </p>
+          </div>
+
+          {selectedFile && uploadStatus.status === 'idle' && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="flex items-center justify-between p-3 bg-primary/5 dark:bg-primary/10 rounded-lg border border-primary/20"
+            >
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-primary" />
+                <span className="font-medium">{selectedFile.name}</span>
+              </div>
+              <Button onClick={handleQuickUpload} size="sm">
+                분석 시작
+              </Button>
+            </motion.div>
+          )}
+
+          {uploadStatus.status !== 'idle' && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="space-y-3"
+            >
+              <div className="flex justify-between text-sm">
+                <span>{uploadStatus.stage}</span>
+                <span>{uploadStatus.progress}%</span>
+              </div>
+              <Progress value={uploadStatus.progress} className="h-2" />
+            </motion.div>
+          )}
+
+          {/* Password Prompt for Encrypted PDFs */}
+          {showPasswordPrompt && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="p-4 bg-yellow-50/50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg space-y-3"
+            >
+              <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300">
+                <CheckCircle className="h-4 w-4" />
+                <span className="text-sm font-medium">PDF 암호화 감지</span>
+              </div>
+              <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                이 PDF는 암호화되어 있습니다. 비밀번호를 입력하여 다시 시도해주세요.
+              </p>
+              <div className="space-y-2">
+                <Input
+                  type="password"
+                  placeholder="PDF 비밀번호를 입력하세요"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleRetryWithPassword()
+                    }
+                  }}
+                  className="bg-background/50"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleRetryWithPassword}
+                    disabled={!password}
+                    className="flex-1"
+                  >
+                    다시 시도
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCancelPasswordPrompt}
+                    className="flex-1"
+                  >
+                    취소
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground pt-2">
+            <div className="flex items-center justify-center gap-1">
+              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+              자동 OCR
+            </div>
+            <div className="flex items-center justify-center gap-1">
+              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+              문제 추출
+            </div>
+            <div className="flex items-center justify-center gap-1">
+              <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+              세션 생성
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+
+  // Quick actions — only meaningful once there is study material to act on
+  const quickActionsCard = (
+    <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-orange-50/30 to-amber-50/30 dark:from-slate-900/80 dark:via-orange-950/20 dark:to-amber-950/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Plus className="h-5 w-5 text-primary" />
+          빠른 시작
+        </CardTitle>
+        <CardDescription>
+          기존 문제로 바로 학습을 시작하거나 복습하세요
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/study'}>
+          <BookOpen className="mr-3 h-5 w-5" />
+          <div className="text-left">
+            <div className="font-medium">랜덤 문제 풀기</div>
+            <div className="text-xs text-muted-foreground">모든 문제에서 랜덤 선택</div>
+          </div>
+        </Button>
+        <Button variant="outline" className="w-full justify-start h-12">
+          <Clock className="mr-3 h-5 w-5" />
+          <div className="text-left">
+            <div className="font-medium">복습하기</div>
+            <div className="text-xs text-muted-foreground">틀린 문제와 북마크 문제</div>
+          </div>
+        </Button>
+        <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/upload'}>
+          <Upload className="mr-3 h-5 w-5" />
+          <div className="text-left">
+            <div className="font-medium">상세 업로드</div>
+            <div className="text-xs text-muted-foreground">업로드 옵션과 진행상황 보기</div>
+          </div>
+        </Button>
+      </CardContent>
+    </Card>
+  )
+
+  // The session cards grid — becomes the main view once sessions exist
+  const sessionGrid = (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {sessions.map((session, index) => (
+        <motion.div
+          key={session.id}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: index * 0.1 }}
+        >
+          <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-slate-50/30 to-gray-50/30 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-gray-900/50 hover:shadow-lg transition-all duration-300 group cursor-pointer">
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <BookOpen className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg line-clamp-1">
+                      {session.name}
+                    </CardTitle>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`}></div>
+                      <span className="text-sm text-muted-foreground">
+                        {getStatusText(session.status)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={session.status === 'completed' ? 'default' : 'secondary'}>
+                    {Math.round(session.progress.progress_percentage)}%
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteSession(session.id, session.name)
+                    }}
+                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>진행률</span>
+                    <span>{session.current_problem_index + 1} / {session.total_problems}</span>
+                  </div>
+                  <Progress value={session.progress.progress_percentage} className="h-2" />
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div>
+                    <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                      {session.progress.completed_count}
+                    </div>
+                    <div className="text-xs text-muted-foreground">완료</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-yellow-600 dark:text-yellow-400">
+                      {session.progress.skipped_count}
+                    </div>
+                    <div className="text-xs text-muted-foreground">스킵</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                      {session.progress.bookmarked_count}
+                    </div>
+                    <div className="text-xs text-muted-foreground">북마크</div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button className="flex-1 group/btn" size="sm" onClick={() => window.location.href = `/study?session=${session.id}`}>
+                    <Play className="mr-2 h-4 w-4 group-hover/btn:scale-110 transition-transform" />
+                    {session.status === 'completed' ? '다시 풀기' :
+                     session.progress.progress_percentage === 0 ? '시작하기' : '계속하기'}
+                  </Button>
+                  <Button variant="outline" size="sm">
+                    <Clock className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <div className="text-xs text-muted-foreground">
+                  {session.last_accessed_at ?
+                    `마지막 접속: ${new Date(session.last_accessed_at).toLocaleDateString('ko-KR')}` :
+                    `생성: ${new Date(session.created_at).toLocaleDateString('ko-KR')}`
+                  }
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      ))}
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/20 dark:from-background dark:via-primary/10 dark:to-purple-950/20">
       {/* Header */}
@@ -257,10 +549,7 @@ export default function HomePage() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80">
-                <Brain className="h-6 w-6 text-primary-foreground" />
-              </div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-purple-600 bg-clip-text text-transparent">
                 Examply
               </h1>
             </div>
@@ -282,322 +571,25 @@ export default function HomePage() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 max-w-6xl">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Upload Section */}
-          <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5 text-primary" />
-                빠른 업로드
-              </CardTitle>
-              <CardDescription>
-                PDF 문제집을 드래그하여 즉시 학습 세션을 만드세요
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <UploadDropzone onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+        {/* Learning Sessions — the main view once study material exists */}
+        {sessions.length > 0 && (
+          <section className="mb-12">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">내 학습 세션</h2>
+              <Badge variant="secondary" className="text-sm">
+                {sessions.length}개 세션
+              </Badge>
+            </div>
+            <AnimatePresence>
+              {sessionGrid}
+            </AnimatePresence>
+          </section>
+        )}
 
-                {/* Session name input */}
-                <div className="space-y-2">
-                  <Label htmlFor="sessionName" className="text-sm font-medium">
-                    학습 세션명 <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    id="sessionName"
-                    type="text"
-                    placeholder="예: 2024년 기말고사 대비"
-                    value={sessionName}
-                    onChange={(e) => setSessionName(e.target.value)}
-                    className="bg-background/50"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    생성할 학습 세션의 이름을 입력하세요
-                  </p>
-                </div>
-
-                {/* Password input for encrypted PDFs */}
-                <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-medium">
-                    PDF 비밀번호 (선택사항)
-                  </Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="암호화된 PDF인 경우 비밀번호를 입력하세요"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="bg-background/50"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    PDF가 암호화되어 있지 않다면 비워두세요
-                  </p>
-                </div>
-
-                {selectedFile && uploadStatus.status === 'idle' && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    className="flex items-center justify-between p-3 bg-primary/5 dark:bg-primary/10 rounded-lg border border-primary/20"
-                  >
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-5 w-5 text-primary" />
-                      <span className="font-medium">{selectedFile.name}</span>
-                    </div>
-                    <Button onClick={handleQuickUpload} size="sm">
-                      분석 시작
-                    </Button>
-                  </motion.div>
-                )}
-
-                {uploadStatus.status !== 'idle' && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    className="space-y-3"
-                  >
-                    <div className="flex justify-between text-sm">
-                      <span>{uploadStatus.stage}</span>
-                      <span>{uploadStatus.progress}%</span>
-                    </div>
-                    <Progress value={uploadStatus.progress} className="h-2" />
-                  </motion.div>
-                )}
-
-                {/* Password Prompt for Encrypted PDFs */}
-                {showPasswordPrompt && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    className="p-4 bg-yellow-50/50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg space-y-3"
-                  >
-                    <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300">
-                      <CheckCircle className="h-4 w-4" />
-                      <span className="text-sm font-medium">PDF 암호화 감지</span>
-                    </div>
-                    <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                      이 PDF는 암호화되어 있습니다. 비밀번호를 입력하여 다시 시도해주세요.
-                    </p>
-                    <div className="space-y-2">
-                      <Input
-                        type="password"
-                        placeholder="PDF 비밀번호를 입력하세요"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleRetryWithPassword()
-                          }
-                        }}
-                        className="bg-background/50"
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={handleRetryWithPassword}
-                          disabled={!password}
-                          className="flex-1"
-                        >
-                          다시 시도
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={handleCancelPasswordPrompt}
-                          className="flex-1"
-                        >
-                          취소
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground pt-2">
-                  <div className="flex items-center justify-center gap-1">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                    자동 OCR
-                  </div>
-                  <div className="flex items-center justify-center gap-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    문제 추출
-                  </div>
-                  <div className="flex items-center justify-center gap-1">
-                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                    세션 생성
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Quick Actions */}
-          <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-orange-50/30 to-amber-50/30 dark:from-slate-900/80 dark:via-orange-950/20 dark:to-amber-950/30">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Plus className="h-5 w-5 text-primary" />
-                빠른 시작
-              </CardTitle>
-              <CardDescription>
-                기존 문제로 바로 학습을 시작하거나 복습하세요
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/study'}>
-                <BookOpen className="mr-3 h-5 w-5" />
-                <div className="text-left">
-                  <div className="font-medium">랜덤 문제 풀기</div>
-                  <div className="text-xs text-muted-foreground">모든 문제에서 랜덤 선택</div>
-                </div>
-              </Button>
-              <Button variant="outline" className="w-full justify-start h-12">
-                <Clock className="mr-3 h-5 w-5" />
-                <div className="text-left">
-                  <div className="font-medium">복습하기</div>
-                  <div className="text-xs text-muted-foreground">틀린 문제와 북마크 문제</div>
-                </div>
-              </Button>
-              <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/upload'}>
-                <Upload className="mr-3 h-5 w-5" />
-                <div className="text-left">
-                  <div className="font-medium">상세 업로드</div>
-                  <div className="text-xs text-muted-foreground">업로드 옵션과 진행상황 보기</div>
-                </div>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Learning Sessions */}
-        <div className="mt-12">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold">내 학습 세션</h2>
-            <Badge variant="secondary" className="text-sm">
-              {sessions.length}개 세션
-            </Badge>
-          </div>
-
-          <AnimatePresence>
-            {sessions.length === 0 ? (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-center py-12"
-              >
-                <FileText className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
-                <h3 className="text-lg font-medium text-muted-foreground mb-2">
-                  아직 학습 세션이 없습니다
-                </h3>
-                <p className="text-muted-foreground mb-4">
-                  PDF를 업로드하여 첫 번째 학습 세션을 만들어보세요
-                </p>
-                <Button onClick={() => setSelectedFile(null)}>
-                  <Upload className="mr-2 h-4 w-4" />
-                  PDF 업로드하기
-                </Button>
-              </motion.div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {sessions.map((session, index) => (
-                  <motion.div
-                    key={session.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                  >
-                    <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-slate-50/30 to-gray-50/30 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-gray-900/50 hover:shadow-lg transition-all duration-300 group cursor-pointer">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-primary/10 rounded-lg">
-                              <BookOpen className="h-5 w-5 text-primary" />
-                            </div>
-                            <div>
-                              <CardTitle className="text-lg line-clamp-1">
-                                {session.name}
-                              </CardTitle>
-                              <div className="flex items-center gap-2 mt-1">
-                                <div className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`}></div>
-                                <span className="text-sm text-muted-foreground">
-                                  {getStatusText(session.status)}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={session.status === 'completed' ? 'default' : 'secondary'}>
-                              {Math.round(session.progress.progress_percentage)}%
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleDeleteSession(session.id, session.name)
-                              }}
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-sm">
-                              <span>진행률</span>
-                              <span>{session.current_problem_index + 1} / {session.total_problems}</span>
-                            </div>
-                            <Progress value={session.progress.progress_percentage} className="h-2" />
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-4 text-center">
-                            <div>
-                              <div className="text-lg font-bold text-green-600 dark:text-green-400">
-                                {session.progress.completed_count}
-                              </div>
-                              <div className="text-xs text-muted-foreground">완료</div>
-                            </div>
-                            <div>
-                              <div className="text-lg font-bold text-yellow-600 dark:text-yellow-400">
-                                {session.progress.skipped_count}
-                              </div>
-                              <div className="text-xs text-muted-foreground">스킵</div>
-                            </div>
-                            <div>
-                              <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
-                                {session.progress.bookmarked_count}
-                              </div>
-                              <div className="text-xs text-muted-foreground">북마크</div>
-                            </div>
-                          </div>
-
-                          <div className="flex gap-2 pt-2">
-                            <Button className="flex-1 group/btn" size="sm" onClick={() => window.location.href = `/study?session=${session.id}`}>
-                              <Play className="mr-2 h-4 w-4 group-hover/btn:scale-110 transition-transform" />
-                              {session.status === 'completed' ? '다시 풀기' :
-                               session.progress.progress_percentage === 0 ? '시작하기' : '계속하기'}
-                            </Button>
-                            <Button variant="outline" size="sm">
-                              <Clock className="h-4 w-4" />
-                            </Button>
-                          </div>
-
-                          <div className="text-xs text-muted-foreground">
-                            {session.last_accessed_at ?
-                              `마지막 접속: ${new Date(session.last_accessed_at).toLocaleDateString('ko-KR')}` :
-                              `생성: ${new Date(session.created_at).toLocaleDateString('ko-KR')}`
-                            }
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </AnimatePresence>
+        {/* Upload — the hero when there is no study material yet, a secondary tool once sessions exist */}
+        <div className={sessions.length === 0 ? "max-w-2xl mx-auto" : "grid grid-cols-1 lg:grid-cols-2 gap-8"}>
+          {uploadCard}
+          {sessions.length > 0 && quickActionsCard}
         </div>
       </main>
     </div>

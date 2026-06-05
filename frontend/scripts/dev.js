@@ -16,7 +16,7 @@ function setupEnvFile() {
     } else {
       // Create minimal .env.local file
       const envContent = `# Frontend Environment Variables
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:8010
 NEXT_PUBLIC_ENVIRONMENT=development
 `;
       fs.writeFileSync(envFile, envContent);

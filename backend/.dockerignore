@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# 로컬 데이터 — 이미지에 포함하지 않음 (EC2에서는 /data 볼륨에 보관)
+var/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# 환경 파일 (비밀값) — 이미지에 굽지 않음
+.env
+.env.local
+
+# Git / 에디터
+.git/
+.gitignore
+.vscode/
+.idea/

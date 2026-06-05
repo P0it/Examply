@@ -1,0 +1,32 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# ---- Environment / secrets ----
+.env
+.env.local
+.env.*.local
+
+# ---- Databases & uploaded data (런타임 생성물) ----
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+backend/data/
+backend/var/
+
+# ---- Node / Next.js (frontend 자체 .gitignore 보완) ----
+node_modules/
+.next/
+out/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

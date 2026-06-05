@@ -6,6 +6,7 @@ import { Progress } from "@/components/ui/progress"
 import { ArrowLeft, Bookmark, SkipForward, Eye, ArrowRight } from "lucide-react"
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { API_BASE_URL } from '@/lib/api'
 
 interface Problem {
   id: string
@@ -50,7 +51,7 @@ export default function StudyPage() {
     const fetchSessionData = async () => {
       try {
         // Fetch session details
-        const sessionResponse = await fetch(`http://localhost:8010/sessions/${sessionId}`)
+        const sessionResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}`)
         if (!sessionResponse.ok) {
           throw new Error('Session not found')
         }
@@ -58,7 +59,7 @@ export default function StudyPage() {
         setSession(sessionData)
 
         // Fetch session progress/status
-        const progressResponse = await fetch(`http://localhost:8010/sessions/${sessionId}/progress`)
+        const progressResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`)
         if (progressResponse.ok) {
           const progressData = await progressResponse.json()
           setSessionProgress(progressData)
@@ -72,7 +73,7 @@ export default function StudyPage() {
         }
 
         // Fetch current problem
-        const problemResponse = await fetch(`http://localhost:8010/sessions/${sessionId}/current-problem`)
+        const problemResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/current-problem`)
         if (problemResponse.ok) {
           const problemData = await problemResponse.json()
           setCurrentProblem(problemData)
@@ -80,7 +81,7 @@ export default function StudyPage() {
 
       } catch (error) {
         console.error('Error fetching session data:', error)
-        // Fallback to mock data or redirect
+        // Session unavailable (not found or backend down) — return home
         router.push('/')
       } finally {
         setLoading(false)
@@ -104,7 +105,7 @@ export default function StudyPage() {
       setShowAnswer(true)
 
       // Submit answer to backend
-      const response = await fetch(`http://localhost:8010/sessions/${sessionId}/submit-answer`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/submit-answer`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,7 +128,7 @@ export default function StudyPage() {
 
     try {
       // Move to next problem
-      const response = await fetch(`http://localhost:8010/sessions/${sessionId}/next`, {
+      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/next`, {
         method: 'POST'
       })
 
@@ -138,13 +139,13 @@ export default function StudyPage() {
         setIsSubmitted(false)
 
         // Refresh data
-        const progressResponse = await fetch(`http://localhost:8010/sessions/${sessionId}/progress`)
+        const progressResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`)
         if (progressResponse.ok) {
           const progressData = await progressResponse.json()
           setSessionProgress(progressData)
         }
 
-        const problemResponse = await fetch(`http://localhost:8010/sessions/${sessionId}/current-problem`)
+        const problemResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/current-problem`)
         if (problemResponse.ok) {
           const problemData = await problemResponse.json()
           setCurrentProblem(problemData)

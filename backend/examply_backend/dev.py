@@ -21,7 +21,7 @@ def setup_env_file():
             f.write("# Backend Environment Variables\n")
             f.write("DATABASE_URL=sqlite:///./examply.db\n")
             f.write("API_HOST=0.0.0.0\n")
-            f.write("API_PORT=8000\n")
+            f.write("API_PORT=8010\n")
             f.write("DEBUG=true\n")
         print(f"✅ Created minimal {env_file}")
 
@@ -38,7 +38,7 @@ def main():
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",
-            port=8000,
+            port=8010,
             reload=True,
             reload_dirs=["app"]
         )

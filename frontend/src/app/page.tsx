@@ -223,45 +223,9 @@ export default function HomePage() {
       })))
     } catch (error) {
       console.error('Failed to load sessions:', error)
-      // Fallback to mock data for development
-      setSessions([
-        {
-          id: 1,
-          name: "수학 문제집.pdf 학습",
-          source_doc_id: "doc-1",
-          status: 'active',
-          current_problem_index: 5,
-          total_problems: 25,
-          created_at: "2024-01-15T10:30:00Z",
-          last_accessed_at: "2024-01-15T14:20:00Z",
-          progress: {
-            current_index: 5,
-            total_problems: 25,
-            completed_count: 5,
-            skipped_count: 2,
-            bookmarked_count: 3,
-            progress_percentage: 20
-          }
-        },
-        {
-          id: 2,
-          name: "영어 독해.pdf 학습",
-          source_doc_id: "doc-2",
-          status: 'paused',
-          current_problem_index: 12,
-          total_problems: 30,
-          created_at: "2024-01-14T09:15:00Z",
-          last_accessed_at: "2024-01-14T16:45:00Z",
-          progress: {
-            current_index: 12,
-            total_problems: 30,
-            completed_count: 10,
-            skipped_count: 1,
-            bookmarked_count: 5,
-            progress_percentage: 33
-          }
-        }
-      ])
+      // Show an empty list and surface the failure instead of fabricating sessions
+      setSessions([])
+      toast.error("학습 세션을 불러오지 못했습니다. 백엔드 서버가 실행 중인지 확인하세요.")
     }
   }
 

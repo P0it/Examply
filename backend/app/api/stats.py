@@ -3,6 +3,7 @@ Statistics endpoints.
 """
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select, func
+from sqlalchemy import Float, Integer
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
@@ -40,7 +41,7 @@ async def get_overview_stats(
 
     # Subject breakdown
     subject_stats = session.exec(
-        select(Problem.subject, func.count(Attempt.id), func.avg(Attempt.is_correct.cast(float)))
+        select(Problem.subject, func.count(Attempt.id), func.avg(Attempt.is_correct.cast(Float)))
         .join(Attempt, Problem.id == Attempt.problem_id)
         .group_by(Problem.subject)
     ).all()
@@ -74,7 +75,7 @@ async def get_progress_stats(
         select(
             func.date(Attempt.submitted_at).label('date'),
             func.count(Attempt.id).label('total'),
-            func.sum(Attempt.is_correct.cast(int)).label('correct')
+            func.sum(Attempt.is_correct.cast(Integer)).label('correct')
         )
         .where(Attempt.submitted_at >= thirty_days_ago)
         .group_by(func.date(Attempt.submitted_at))
@@ -85,7 +86,8 @@ async def get_progress_stats(
     for date, total, correct in daily_stats:
         accuracy = (correct / total * 100) if total > 0 else 0
         progress_data.append({
-            "date": date.isoformat(),
+            # SQLite's date() hands back a string; Postgres hands back a date.
+            "date": date if isinstance(date, str) else date.isoformat(),
             "total_attempts": total,
             "correct_attempts": correct,
             "accuracy_rate": round(accuracy, 1)

@@ -10,6 +10,7 @@ from datetime import datetime
 from app.db.database import get_session
 from app.models import Session as LearningSession, SessionProblem, Problem, SourceDoc, SessionStatus, Attempt
 from app.services.session_service import SessionService
+from app.services import review_service
 
 import logging
 logger = logging.getLogger(__name__)
@@ -28,6 +29,16 @@ class CreateSessionRequest(BaseModel):
 
 class SubmitAnswerRequest(BaseModel):
     choice_index: int
+
+
+class GotoRequest(BaseModel):
+    index: int  # 1-based, as shown in the UI
+
+
+class ReviewAnswerRequest(BaseModel):
+    problem_id: int
+    choice_index: int
+    rating: Optional[str] = None  # "hard" / "easy" to nudge the interval by hand
 
 
 @router.post("/")
@@ -183,7 +194,10 @@ async def get_current_problem(
         "question_text": problem.question_text,
         "choices": [{"choice_index": choice.choice_index, "text": choice.text} for choice in choices],
         "correct_answer_index": problem.correct_answer_index,
-        "explanation": problem.explanation
+        "explanation": problem.explanation,
+        "is_bookmarked": session_problem.is_bookmarked,
+        "is_skipped": session_problem.is_skipped,
+        "is_completed": session_problem.is_completed,
     }
 
 
@@ -312,13 +326,24 @@ async def submit_answer(
     if problem and problem.correct_answer_index is not None:
         attempt.is_correct = (choice_index == problem.correct_answer_index)
 
+    session_problem.is_completed = True
+    session_problem.is_skipped = False
+    session_problem.completed_at = datetime.utcnow()
+    session.add(session_problem)
+
     session.add(attempt)
     session.commit()
+
+    card, _rating = review_service.grade(
+        session, session_id, session_problem.problem_id, attempt.is_correct
+    )
 
     return {
         "message": "Answer submitted",
         "is_correct": attempt.is_correct,
-        "correct_answer_index": problem.correct_answer_index if problem else None
+        "correct_answer_index": problem.correct_answer_index if problem else None,
+        "next_due": card.due.isoformat(),
+        "interval_days": card.interval_days(),
     }
 
 
@@ -349,3 +374,204 @@ async def move_to_next_problem(
         "total_problems": problem_session.total_problems
     }
 
+
+def _current_session_problem(session: Session, session_id: int):
+    """Resolve the session and its problem at the current index."""
+    problem_session = session.get(LearningSession, session_id)
+    if not problem_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    current_index = max(0, problem_session.current_problem_index)
+    session_problem = session.exec(
+        select(SessionProblem).where(
+            SessionProblem.session_id == session_id,
+            SessionProblem.order_index == current_index
+        )
+    ).first()
+
+    if not session_problem:
+        raise HTTPException(status_code=404, detail="No current problem found")
+
+    return problem_session, session_problem
+
+
+@router.post("/{session_id}/bookmark")
+async def toggle_bookmark(
+    session_id: int,
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """Toggle the bookmark on the current problem."""
+    problem_session, session_problem = _current_session_problem(session, session_id)
+
+    session_problem.is_bookmarked = not session_problem.is_bookmarked
+    problem_session.last_accessed_at = datetime.utcnow()
+    session.add(session_problem)
+    session.add(problem_session)
+    session.commit()
+
+    return {
+        "problem_id": session_problem.problem_id,
+        "is_bookmarked": session_problem.is_bookmarked,
+    }
+
+
+@router.post("/{session_id}/skip")
+async def skip_current_problem(
+    session_id: int,
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """Mark the current problem as skipped and move on."""
+    problem_session, session_problem = _current_session_problem(session, session_id)
+
+    session_problem.is_skipped = True
+    session.add(session_problem)
+
+    if problem_session.current_problem_index + 1 < problem_session.total_problems:
+        problem_session.current_problem_index += 1
+
+    problem_session.last_accessed_at = datetime.utcnow()
+    session.add(problem_session)
+    session.commit()
+
+    return {
+        "skipped_problem_id": session_problem.problem_id,
+        "current_index": problem_session.current_problem_index + 1,
+        "total_problems": problem_session.total_problems,
+    }
+
+
+@router.post("/{session_id}/goto")
+async def goto_problem(
+    session_id: int,
+    request: GotoRequest,
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """Jump to a problem by its 1-based position in the session."""
+    problem_session = session.get(LearningSession, session_id)
+    if not problem_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if request.index < 1 or request.index > problem_session.total_problems:
+        raise HTTPException(
+            status_code=400,
+            detail=f"1부터 {problem_session.total_problems} 사이의 번호를 입력하세요."
+        )
+
+    problem_session.current_problem_index = request.index - 1
+    problem_session.last_accessed_at = datetime.utcnow()
+    session.add(problem_session)
+    session.commit()
+
+    return {
+        "current_index": problem_session.current_problem_index + 1,
+        "total_problems": problem_session.total_problems,
+    }
+
+
+def _problem_payload(session: Session, problem_id: int) -> Dict[str, Any]:
+    """Problem plus choices, shaped like the study screen expects."""
+    from app.models import ProblemChoice
+
+    problem = session.get(Problem, problem_id)
+    if not problem:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    choices = session.exec(
+        select(ProblemChoice)
+        .where(ProblemChoice.problem_id == problem.id)
+        .order_by(ProblemChoice.choice_index)
+    ).all()
+
+    return {
+        "id": problem.id,
+        "question_text": problem.question_text,
+        "choices": [{"choice_index": c.choice_index, "text": c.text} for c in choices],
+        "correct_answer_index": problem.correct_answer_index,
+        "explanation": problem.explanation,
+    }
+
+
+@router.get("/{session_id}/review/stats")
+async def review_stats(
+    session_id: int,
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """How much of this session is waiting to be reviewed."""
+    if not session.get(LearningSession, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return review_service.stats(session, session_id)
+
+
+@router.get("/{session_id}/review/next")
+async def next_due_problem(
+    session_id: int,
+    exclude: str = Query("", description="Problem ids already answered in this sitting"),
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """The next problem whose review is due, or nothing left for now."""
+    if not session.get(LearningSession, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    answered = {int(part) for part in exclude.split(",") if part.strip().isdigit()}
+    due = review_service.due_cards(session, session_id, limit=50, exclude_problem_ids=answered)
+    if not due:
+        return {"problem": None, "remaining": 0}
+
+    card = due[0]
+    session_problem = session.exec(
+        select(SessionProblem).where(
+            SessionProblem.session_id == session_id,
+            SessionProblem.problem_id == card.problem_id,
+        )
+    ).first()
+
+    return {
+        "problem": _problem_payload(session, card.problem_id),
+        "remaining": len(due),
+        "position": session_problem.order_index + 1 if session_problem else None,
+        "is_bookmarked": session_problem.is_bookmarked if session_problem else False,
+        "lapses": card.lapses,
+        "reps": card.reps,
+    }
+
+
+@router.post("/{session_id}/review/answer")
+async def answer_due_problem(
+    session_id: int,
+    request: ReviewAnswerRequest,
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """Grade a review answer and reschedule the card."""
+    if not session.get(LearningSession, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    problem = session.get(Problem, request.problem_id)
+    if not problem:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    is_correct = (
+        problem.correct_answer_index is not None
+        and request.choice_index == problem.correct_answer_index
+    )
+
+    attempt = Attempt(
+        session_id=session_id,
+        problem_id=problem.id,
+        user_answer_index=request.choice_index,
+        is_correct=is_correct,
+    )
+    session.add(attempt)
+    session.commit()
+
+    card, rating = review_service.grade(
+        session, session_id, problem.id, is_correct, request.rating
+    )
+
+    return {
+        "is_correct": is_correct,
+        "correct_answer_index": problem.correct_answer_index,
+        "rating": rating.name.lower(),
+        "next_due": card.due.isoformat(),
+        "interval_days": card.interval_days(),
+        "remaining": len(review_service.due_cards(session, session_id, limit=50)),
+    }

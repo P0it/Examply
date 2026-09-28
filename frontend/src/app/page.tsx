@@ -1,18 +1,23 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Progress } from "@/components/ui/progress"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Progress } from "@/components/ui/progress"
 import { UploadDropzone } from "@/components/upload-dropzone"
-import { BookOpen, Upload, Play, Clock, CheckCircle, FileText, Plus, Trash2 } from "lucide-react"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { motion, AnimatePresence } from "framer-motion"
+import { SiteHeader } from "@/components/site-header"
+import { ExamCountdown } from "@/components/exam-countdown"
+import Link from "next/link"
+import { ArrowRight, Trash2 } from "lucide-react"
 import toast from "react-hot-toast"
-import { uploadPdf, startImport, getImportStatus, getSessions, deleteSession, deleteImportJob, type SessionResponse } from "@/lib/api"
+import {
+  uploadPdf,
+  startImport,
+  getImportStatus,
+  getSessions,
+  deleteSession,
+  getReviewStats,
+} from "@/lib/api"
 
 interface Session {
   id: number
@@ -31,201 +36,41 @@ interface Session {
   }
 }
 
+type UploadState = {
+  status: 'idle' | 'uploading' | 'processing' | 'password_required'
+  progress: number
+  stage: string
+}
+
+const IDLE: UploadState = { status: 'idle', progress: 0, stage: '' }
+
 export default function HomePage() {
   const [sessions, setSessions] = useState<Session[]>([])
+  const [due, setDue] = useState<Record<number, number>>({})
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [password, setPassword] = useState<string>('')
-  const [sessionName, setSessionName] = useState<string>('')
-  const [showPasswordPrompt, setShowPasswordPrompt] = useState<boolean>(false)
-  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
-  const [uploadStatus, setUploadStatus] = useState<{
-    status: 'idle' | 'uploading' | 'processing' | 'password_required'
-    progress: number
-    stage: string
-  }>({
-    status: 'idle',
-    progress: 0,
-    stage: ''
-  })
-
-  const handleFileSelect = (file: File) => {
-    setSelectedFile(file)
-  }
-
-  const handleQuickUpload = async () => {
-    if (!selectedFile) return
-
-    if (!sessionName.trim()) {
-      toast.error("학습 세션의 이름을 입력해주세요.")
-      return
-    }
-
-    try {
-      setUploadStatus({ status: 'uploading', progress: 0, stage: '파일 업로드 중...' })
-
-      let job_id: string
-      try {
-        const uploadResult = await uploadPdf(selectedFile, password || undefined, sessionName)
-        job_id = uploadResult.job_id
-      } catch (uploadError: any) {
-        // Handle upload errors (including encryption errors) immediately
-        if (uploadError.status === 400 && uploadError.message) {
-          if (uploadError.message.includes('잠겨있습니다') ||
-              uploadError.message.includes('비밀번호') ||
-              uploadError.message.includes('암호화')) {
-            setUploadStatus({ status: 'password_required', progress: 0, stage: '비밀번호가 필요합니다' })
-            setShowPasswordPrompt(true)
-            toast.error("PDF 파일이 잠겨있습니다. 비밀번호를 입력해주세요.")
-            return
-          }
-        }
-        throw uploadError
-      }
-
-      await startImport(job_id)
-
-      setUploadStatus({ status: 'processing', progress: 50, stage: '문제 분석 중...' })
-
-      // Poll for completion
-      const poll = async () => {
-        try {
-          const status = await getImportStatus(job_id)
-          setUploadStatus({
-            status: 'processing',
-            progress: status.progress,
-            stage: status.stage
-          })
-
-          if (status.status === 'done') {
-            setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-            setSelectedFile(null)
-            toast.success(`${status.extracted_count}개의 문제가 추출되어 새 학습 세션이 생성되었습니다.`)
-            // Refresh sessions list
-            loadSessions()
-          } else if (status.status === 'error') {
-            // Check if it's a password-related error
-            if (status.error_message &&
-                (status.error_message.includes('암호화') ||
-                 status.error_message.includes('비밀번호') ||
-                 status.error_message.includes('password'))) {
-              setUploadStatus({ status: 'password_required', progress: 0, stage: '비밀번호가 필요합니다' })
-              setCurrentJobId(job_id)
-              setShowPasswordPrompt(true)
-              toast.error("PDF가 암호화되어 있습니다. 비밀번호를 입력해주세요.")
-            } else {
-              setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-              toast.error(status.error_message || "알 수 없는 오류가 발생했습니다.")
-            }
-          } else {
-            setTimeout(poll, 2000)
-          }
-        } catch (error) {
-          console.error('Polling error:', error)
-        }
-      }
-      poll()
-
-    } catch (error) {
-      setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-      toast.error(error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.")
-    }
-  }
-
-  const handleDeleteSession = async (sessionId: number, sessionName: string) => {
-    if (!confirm(`"${sessionName}" 세션을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) {
-      return
-    }
-
-    try {
-      await deleteSession(sessionId)
-      toast.success(`"${sessionName}" 세션이 삭제되었습니다.`)
-      // Refresh sessions list
-      loadSessions()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "세션 삭제 중 오류가 발생했습니다.")
-    }
-  }
-
-  const handleRetryWithPassword = async () => {
-    if (!password) {
-      toast.error("비밀번호를 입력해주세요.")
-      return
-    }
-
-    try {
-      setShowPasswordPrompt(false)
-      setUploadStatus({ status: 'uploading', progress: 0, stage: '비밀번호로 재시도 중...' })
-
-      // Upload again with password
-      const { job_id } = await uploadPdf(selectedFile!, password, sessionName)
-      await startImport(job_id)
-      setCurrentJobId(job_id)
-
-      setUploadStatus({ status: 'processing', progress: 50, stage: '문제 분석 중...' })
-
-      // Poll for completion
-      const poll = async () => {
-        try {
-          const status = await getImportStatus(job_id)
-          setUploadStatus({
-            status: 'processing',
-            progress: status.progress,
-            stage: status.stage
-          })
-
-          if (status.status === 'done') {
-            setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-            setSelectedFile(null)
-            setPassword('')
-            setCurrentJobId(null)
-            toast.success(`${status.extracted_count}개의 문제가 추출되어 새 학습 세션이 생성되었습니다.`)
-            loadSessions()
-          } else if (status.status === 'error') {
-            setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-            setCurrentJobId(null)
-            toast.error(status.error_message || "알 수 없는 오류가 발생했습니다.")
-          } else {
-            setTimeout(poll, 2000)
-          }
-        } catch (error) {
-          console.error('Polling error:', error)
-        }
-      }
-      poll()
-
-    } catch (error) {
-      setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-      setCurrentJobId(null)
-      toast.error(error instanceof Error ? error.message : "재시도 중 오류가 발생했습니다.")
-    }
-  }
-
-  const handleCancelPasswordPrompt = () => {
-    setShowPasswordPrompt(false)
-    setUploadStatus({ status: 'idle', progress: 0, stage: '' })
-    setCurrentJobId(null)
-    setPassword('')
-  }
+  const [password, setPassword] = useState('')
+  const [sessionName, setSessionName] = useState('')
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false)
+  const [upload, setUpload] = useState<UploadState>(IDLE)
 
   const loadSessions = async () => {
     try {
       const response = await getSessions({ limit: 20 })
-      setSessions(response.sessions.map(session => ({
-        id: session.id,
-        name: session.name,
-        source_doc_id: session.source_doc_id,
-        status: session.status,
-        current_problem_index: session.current_problem_index,
-        total_problems: session.total_problems,
-        created_at: session.created_at,
-        last_accessed_at: session.last_accessed_at,
-        progress: session.progress
-      })))
-    } catch (error) {
-      console.error('Failed to load sessions:', error)
-      // Show an empty list and surface the failure instead of fabricating sessions
+      const rows = response.sessions as unknown as Session[]
+      setSessions(rows)
+
+      // How many cards each session has waiting right now.
+      const counts = await Promise.all(
+        rows.map((row) =>
+          getReviewStats(row.id)
+            .then((stats) => [row.id, stats.due_now] as const)
+            .catch(() => [row.id, 0] as const)
+        )
+      )
+      setDue(Object.fromEntries(counts))
+    } catch {
       setSessions([])
-      toast.error("학습 세션을 불러오지 못했습니다. 백엔드 서버가 실행 중인지 확인하세요.")
+      toast.error("세션을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.")
     }
   }
 
@@ -233,364 +78,229 @@ export default function HomePage() {
     loadSessions()
   }, [])
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'bg-green-500'
-      case 'paused': return 'bg-yellow-500'
-      case 'completed': return 'bg-blue-500'
-      default: return 'bg-gray-500'
+  // Polls the import job until it finishes, mirroring its stage text into the progress row.
+  const trackImport = (jobId: string) => {
+    const poll = async () => {
+      try {
+        const status = await getImportStatus(jobId)
+        setUpload({ status: 'processing', progress: status.progress, stage: status.stage })
+
+        if (status.status === 'done') {
+          setUpload(IDLE)
+          setSelectedFile(null)
+          setSessionName('')
+          setPassword('')
+          toast.success(`${status.extracted_count}문항을 뽑았습니다`)
+          loadSessions()
+          return
+        }
+
+        if (status.status === 'error') {
+          const message = status.error_message || "알 수 없는 오류가 발생했습니다."
+          if (/암호|비밀번호|password/.test(message)) {
+            setUpload({ status: 'password_required', progress: 0, stage: '' })
+            setShowPasswordPrompt(true)
+            toast.error("잠긴 PDF입니다. 비밀번호를 입력하세요.")
+          } else {
+            setUpload(IDLE)
+            toast.error(message)
+          }
+          return
+        }
+
+        setTimeout(poll, 2000)
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }
+    poll()
+  }
+
+  const startAnalysis = async () => {
+    if (!selectedFile) return
+    if (!sessionName.trim()) {
+      toast.error("세션 이름을 입력하세요.")
+      return
+    }
+
+    try {
+      setUpload({ status: 'uploading', progress: 0, stage: '업로드 중' })
+      const { job_id } = await uploadPdf(selectedFile, password || undefined, sessionName)
+      await startImport(job_id)
+      setShowPasswordPrompt(false)
+      setUpload({ status: 'processing', progress: 0, stage: '분석 중' })
+      trackImport(job_id)
+    } catch (caught) {
+      setUpload(IDLE)
+      const error = caught as { message?: string; status?: number }
+      const message = error?.message ?? "업로드에 실패했습니다."
+      if (error?.status === 400 && /잠겨|비밀번호|암호/.test(message)) {
+        setUpload({ status: 'password_required', progress: 0, stage: '' })
+        setShowPasswordPrompt(true)
+        toast.error("잠긴 PDF입니다. 비밀번호를 입력하세요.")
+        return
+      }
+      toast.error(message)
     }
   }
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'active': return '진행중'
-      case 'paused': return '일시정지'
-      case 'completed': return '완료'
-      default: return '알 수 없음'
+  const removeSession = async (id: number, name: string) => {
+    if (!confirm(`"${name}" 세션을 삭제할까요? 되돌릴 수 없습니다.`)) return
+    try {
+      await deleteSession(id)
+      toast.success("세션을 삭제했습니다")
+      loadSessions()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "삭제하지 못했습니다.")
     }
   }
 
-  // Upload card — the hero when there are no sessions yet, a secondary tool once sessions exist
-  const uploadCard = (
-    <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Upload className="h-5 w-5 text-primary" />
-          빠른 업로드
-        </CardTitle>
-        <CardDescription>
-          PDF 문제집을 드래그하여 즉시 학습 세션을 만드세요
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          <UploadDropzone onFileSelect={handleFileSelect} selectedFile={selectedFile} />
-
-          {/* Session name input */}
-          <div className="space-y-2">
-            <Label htmlFor="sessionName" className="text-sm font-medium">
-              학습 세션명 <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="sessionName"
-              type="text"
-              placeholder="예: 2024년 기말고사 대비"
-              value={sessionName}
-              onChange={(e) => setSessionName(e.target.value)}
-              className="bg-background/50"
-            />
-            <p className="text-xs text-muted-foreground">
-              생성할 학습 세션의 이름을 입력하세요
-            </p>
-          </div>
-
-          {/* Password input for encrypted PDFs */}
-          <div className="space-y-2">
-            <Label htmlFor="password" className="text-sm font-medium">
-              PDF 비밀번호 (선택사항)
-            </Label>
-            <Input
-              id="password"
-              type="password"
-              placeholder="암호화된 PDF인 경우 비밀번호를 입력하세요"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="bg-background/50"
-            />
-            <p className="text-xs text-muted-foreground">
-              PDF가 암호화되어 있지 않다면 비워두세요
-            </p>
-          </div>
-
-          {selectedFile && uploadStatus.status === 'idle' && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              className="flex items-center justify-between p-3 bg-primary/5 dark:bg-primary/10 rounded-lg border border-primary/20"
-            >
-              <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                <span className="font-medium">{selectedFile.name}</span>
-              </div>
-              <Button onClick={handleQuickUpload} size="sm">
-                분석 시작
-              </Button>
-            </motion.div>
-          )}
-
-          {uploadStatus.status !== 'idle' && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              className="space-y-3"
-            >
-              <div className="flex justify-between text-sm">
-                <span>{uploadStatus.stage}</span>
-                <span>{uploadStatus.progress}%</span>
-              </div>
-              <Progress value={uploadStatus.progress} className="h-2" />
-            </motion.div>
-          )}
-
-          {/* Password Prompt for Encrypted PDFs */}
-          {showPasswordPrompt && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              className="p-4 bg-yellow-50/50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg space-y-3"
-            >
-              <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300">
-                <CheckCircle className="h-4 w-4" />
-                <span className="text-sm font-medium">PDF 암호화 감지</span>
-              </div>
-              <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                이 PDF는 암호화되어 있습니다. 비밀번호를 입력하여 다시 시도해주세요.
-              </p>
-              <div className="space-y-2">
-                <Input
-                  type="password"
-                  placeholder="PDF 비밀번호를 입력하세요"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleRetryWithPassword()
-                    }
-                  }}
-                  className="bg-background/50"
-                />
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={handleRetryWithPassword}
-                    disabled={!password}
-                    className="flex-1"
-                  >
-                    다시 시도
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleCancelPasswordPrompt}
-                    className="flex-1"
-                  >
-                    취소
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground pt-2">
-            <div className="flex items-center justify-center gap-1">
-              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-              자동 OCR
-            </div>
-            <div className="flex items-center justify-center gap-1">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              문제 추출
-            </div>
-            <div className="flex items-center justify-center gap-1">
-              <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-              세션 생성
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-
-  // Quick actions — only meaningful once there is study material to act on
-  const quickActionsCard = (
-    <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-orange-50/30 to-amber-50/30 dark:from-slate-900/80 dark:via-orange-950/20 dark:to-amber-950/30">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Plus className="h-5 w-5 text-primary" />
-          빠른 시작
-        </CardTitle>
-        <CardDescription>
-          기존 문제로 바로 학습을 시작하거나 복습하세요
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/study'}>
-          <BookOpen className="mr-3 h-5 w-5" />
-          <div className="text-left">
-            <div className="font-medium">랜덤 문제 풀기</div>
-            <div className="text-xs text-muted-foreground">모든 문제에서 랜덤 선택</div>
-          </div>
-        </Button>
-        <Button variant="outline" className="w-full justify-start h-12">
-          <Clock className="mr-3 h-5 w-5" />
-          <div className="text-left">
-            <div className="font-medium">복습하기</div>
-            <div className="text-xs text-muted-foreground">틀린 문제와 북마크 문제</div>
-          </div>
-        </Button>
-        <Button variant="outline" className="w-full justify-start h-12" onClick={() => window.location.href = '/upload'}>
-          <Upload className="mr-3 h-5 w-5" />
-          <div className="text-left">
-            <div className="font-medium">상세 업로드</div>
-            <div className="text-xs text-muted-foreground">업로드 옵션과 진행상황 보기</div>
-          </div>
-        </Button>
-      </CardContent>
-    </Card>
-  )
-
-  // The session cards grid — becomes the main view once sessions exist
-  const sessionGrid = (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      {sessions.map((session, index) => (
-        <motion.div
-          key={session.id}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: index * 0.1 }}
-        >
-          <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-slate-50/30 to-gray-50/30 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-gray-900/50 hover:shadow-lg transition-all duration-300 group cursor-pointer">
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary/10 rounded-lg">
-                    <BookOpen className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-lg line-clamp-1">
-                      {session.name}
-                    </CardTitle>
-                    <div className="flex items-center gap-2 mt-1">
-                      <div className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`}></div>
-                      <span className="text-sm text-muted-foreground">
-                        {getStatusText(session.status)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={session.status === 'completed' ? 'default' : 'secondary'}>
-                    {Math.round(session.progress.progress_percentage)}%
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDeleteSession(session.id, session.name)
-                    }}
-                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>진행률</span>
-                    <span>{session.current_problem_index + 1} / {session.total_problems}</span>
-                  </div>
-                  <Progress value={session.progress.progress_percentage} className="h-2" />
-                </div>
-
-                <div className="grid grid-cols-3 gap-4 text-center">
-                  <div>
-                    <div className="text-lg font-bold text-green-600 dark:text-green-400">
-                      {session.progress.completed_count}
-                    </div>
-                    <div className="text-xs text-muted-foreground">완료</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-yellow-600 dark:text-yellow-400">
-                      {session.progress.skipped_count}
-                    </div>
-                    <div className="text-xs text-muted-foreground">스킵</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
-                      {session.progress.bookmarked_count}
-                    </div>
-                    <div className="text-xs text-muted-foreground">북마크</div>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <Button className="flex-1 group/btn" size="sm" onClick={() => window.location.href = `/study?session=${session.id}`}>
-                    <Play className="mr-2 h-4 w-4 group-hover/btn:scale-110 transition-transform" />
-                    {session.status === 'completed' ? '다시 풀기' :
-                     session.progress.progress_percentage === 0 ? '시작하기' : '계속하기'}
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    <Clock className="h-4 w-4" />
-                  </Button>
-                </div>
-
-                <div className="text-xs text-muted-foreground">
-                  {session.last_accessed_at ?
-                    `마지막 접속: ${new Date(session.last_accessed_at).toLocaleDateString('ko-KR')}` :
-                    `생성: ${new Date(session.created_at).toLocaleDateString('ko-KR')}`
-                  }
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      ))}
-    </div>
+  const busy = upload.status === 'uploading' || upload.status === 'processing'
+  const remainingProblems = sessions.reduce(
+    (sum, session) => sum + Math.max(0, session.total_problems - session.progress.completed_count),
+    0
   )
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/20 dark:from-background dark:via-primary/10 dark:to-purple-950/20">
-      {/* Header */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-purple-600 bg-clip-text text-transparent">
-                Examply
-              </h1>
+    <div className="min-h-screen">
+      <SiteHeader />
+
+      <main className="mx-auto max-w-5xl space-y-12 px-6 py-10">
+        <section className="grid gap-6 md:grid-cols-2 md:[&>*:only-child]:col-span-2">
+          <ExamCountdown remainingProblems={remainingProblems} />
+
+          <div className="space-y-4 rounded-lg border bg-card p-6">
+            <div>
+              <h2 className="text-base font-semibold">문제집 올리기</h2>
+              <p className="mt-1 text-sm text-muted-foreground">덤프 PDF를 올리면 문제를 뽑아 세션으로 만듭니다.</p>
             </div>
-            <nav className="flex items-center space-x-6">
-              <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
-                복습하기
-              </Button>
-              <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200" onClick={() => window.location.href = '/upload'}>
-                상세 업로드
-              </Button>
-              <Button variant="ghost" className="hover:bg-primary/10 transition-all duration-200">
-                통계
-              </Button>
-              <ThemeToggle />
-            </nav>
+
+            <UploadDropzone onFileSelect={setSelectedFile} selectedFile={selectedFile} />
+
+            {selectedFile && !busy && (
+              <div className="flex gap-2">
+                <Input
+                  value={sessionName}
+                  onChange={(e) => setSessionName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && startAnalysis()}
+                  placeholder="세션 이름"
+                  aria-label="세션 이름"
+                />
+                <Button onClick={startAnalysis} className="shrink-0">분석 시작</Button>
+              </div>
+            )}
+
+            {busy && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">{upload.stage}</span>
+                  <span className="tabular-nums text-muted-foreground">{upload.progress}%</span>
+                </div>
+                <Progress value={upload.progress} />
+              </div>
+            )}
+
+            {showPasswordPrompt && (
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && startAnalysis()}
+                  placeholder="PDF 비밀번호"
+                  aria-label="PDF 비밀번호"
+                />
+                <Button onClick={startAnalysis} disabled={!password} className="shrink-0">
+                  다시 시도
+                </Button>
+              </div>
+            )}
           </div>
-        </div>
-      </header>
+        </section>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8 max-w-6xl">
-        {/* Learning Sessions — the main view once study material exists */}
-        {sessions.length > 0 && (
-          <section className="mb-12">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">내 학습 세션</h2>
-              <Badge variant="secondary" className="text-sm">
-                {sessions.length}개 세션
-              </Badge>
-            </div>
-            <AnimatePresence>
-              {sessionGrid}
-            </AnimatePresence>
-          </section>
-        )}
+        <section className="space-y-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-xl font-semibold">학습 세션</h2>
+            {sessions.length > 0 && (
+              <span className="text-sm tabular-nums text-muted-foreground">{sessions.length}개</span>
+            )}
+          </div>
 
-        {/* Upload — the hero when there is no study material yet, a secondary tool once sessions exist */}
-        <div className={sessions.length === 0 ? "max-w-2xl mx-auto" : "grid grid-cols-1 lg:grid-cols-2 gap-8"}>
-          {uploadCard}
-          {sessions.length > 0 && quickActionsCard}
-        </div>
+          {sessions.length === 0 ? (
+            <p className="rounded-lg border border-dashed bg-card py-12 text-center text-sm text-muted-foreground">
+              아직 세션이 없습니다. 위에서 PDF를 올려 시작하세요.
+            </p>
+          ) : (
+            <ul className="grid gap-4 md:grid-cols-2">
+              {sessions.map((session) => {
+                const done = session.progress.progress_percentage >= 100
+                return (
+                  <li
+                    key={session.id}
+                    className="flex flex-col gap-4 rounded-lg border bg-card p-5 transition-shadow hover:shadow-md"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{session.name}</p>
+                        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                          {session.total_problems}문항 · 완료 {session.progress.completed_count} · 북마크 {session.progress.bookmarked_count}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeSession(session.id, session.name)}
+                        className="h-8 w-8 shrink-0 p-0 text-subtle hover:text-destructive"
+                        aria-label="세션 삭제"
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <Progress value={session.progress.progress_percentage} className="flex-1" />
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                        {Math.round(session.progress.progress_percentage)}%
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant={due[session.id] > 0 ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => { window.location.href = `/review?session=${session.id}` }}
+                        className={due[session.id] > 0 ? "" : "text-muted-foreground"}
+                      >
+                        복습{due[session.id] > 0 && ` ${due[session.id]}`}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => { window.location.href = `/study?session=${session.id}` }}
+                      >
+                        {done ? '다시 풀기' : session.progress.progress_percentage === 0 ? '시작' : '이어서'}
+                      </Button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section className="flex flex-col items-start justify-between gap-4 rounded-lg bg-secondary p-8 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="text-xl font-semibold">시험 전에 알아둘 것</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              65문항 · 130분 · 720점 합격. 도메인 비중과 응시 팁을 정리했습니다.
+            </p>
+          </div>
+          <Button asChild>
+            <Link href="/guide">
+              시험 가이드
+              <ArrowRight />
+            </Link>
+          </Button>
+        </section>
       </main>
     </div>
   )

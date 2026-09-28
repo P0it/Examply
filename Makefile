@@ -15,7 +15,7 @@ dev:
 	@make -j2 dev-backend dev-frontend
 
 dev-backend:
-	cd backend && uv run uvicorn app.main:app --reload
+	cd backend && uv run uvicorn app.main:app --reload --port 8010
 
 dev-frontend:
 	cd frontend && npm run dev

@@ -1,14 +1,12 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useCallback, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { Badge } from "@/components/ui/badge"
-import { UploadDropzone } from "@/components/upload-dropzone"
-import { motion, AnimatePresence } from "framer-motion"
-import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, BookOpen, Lock, Key } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
+import { UploadDropzone } from "@/components/upload-dropzone"
+import { SiteHeader } from "@/components/site-header"
 import toast from "react-hot-toast"
 import { uploadPdf, startImport, getImportStatus, unlockEncryptedPdf } from "@/lib/api"
 
@@ -20,402 +18,186 @@ interface UploadStatus {
   logs: string[]
   extractedCount: number
   errorMessage?: string
-  encrypted?: boolean
-  needsPassword?: boolean
+}
+
+const IDLE: UploadStatus = {
+  status: 'idle',
+  progress: 0,
+  stage: '',
+  logs: [],
+  extractedCount: 0,
 }
 
 export default function UploadPage() {
+  const router = useRouter()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [sessionName, setSessionName] = useState('')
   const [password, setPassword] = useState('')
-  const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
-    status: 'idle',
-    progress: 0,
-    stage: '',
-    logs: [],
-    extractedCount: 0
-  })
+  const [status, setStatus] = useState<UploadStatus>(IDLE)
 
-  const handleFileSelect = useCallback((file: File) => {
+  const selectFile = useCallback((file: File | null) => {
     setSelectedFile(file)
-    setUploadStatus({
-      status: 'idle',
-      progress: 0,
-      stage: '',
-      logs: [],
-      extractedCount: 0
-    })
+    setStatus(IDLE)
   }, [])
 
-  const handleUpload = async () => {
-    if (!selectedFile) return
-
-    try {
-      setUploadStatus(prev => ({ ...prev, status: 'uploading', progress: 0, stage: '파일 업로드 중...' }))
-
-      // Upload file
-      const uploadResponse = await uploadPdf(selectedFile)
-
-      // Check if file is encrypted and needs password
-      if (uploadResponse.encrypted && uploadResponse.needs_password) {
-        setUploadStatus(prev => ({
-          ...prev,
-          jobId: uploadResponse.job_id,
-          status: 'needs_password',
-          progress: 10,
-          stage: '암호화된 PDF입니다. 비밀번호를 입력해주세요.',
-          encrypted: true,
-          needsPassword: true
-        }))
-        toast.error("이 PDF는 암호화되어 있습니다. 비밀번호를 입력해주세요.")
-        return
-      }
-
-      setUploadStatus(prev => ({
-        ...prev,
-        jobId: uploadResponse.job_id,
-        status: 'queued',
-        progress: 5,
-        stage: '업로드 완료, 처리 대기 중...'
-      }))
-
-      // Start import process for non-encrypted files
-      await startImport(uploadResponse.job_id)
-
-      // Start polling for status
-      pollJobStatus(uploadResponse.job_id)
-
-      toast.success("PDF 분석을 시작합니다.")
-
-    } catch (error) {
-      console.error('Upload error:', error)
-      setUploadStatus(prev => ({
-        ...prev,
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error'
-      }))
-      toast.error(error instanceof Error ? error.message : "업로드 중 오류가 발생했습니다.")
-    }
-  }
-
-  const pollJobStatus = async (jobId: string) => {
+  const pollJobStatus = (jobId: string) => {
     const poll = async () => {
       try {
-        const status = await getImportStatus(jobId)
-
-        setUploadStatus(prev => ({
+        const job = await getImportStatus(jobId)
+        setStatus((prev) => ({
           ...prev,
-          status: status.status,
-          progress: status.progress,
-          stage: status.stage,
-          logs: status.logs || [],
-          extractedCount: status.extracted_count || 0,
-          errorMessage: status.error_message
+          status: job.status,
+          progress: job.progress,
+          stage: job.stage,
+          logs: job.logs || [],
+          extractedCount: job.extracted_count || 0,
+          errorMessage: job.error_message,
         }))
 
-        // Continue polling if not finished
-        if (status.status === 'running' || status.status === 'queued') {
-          setTimeout(poll, 2000) // Poll every 2 seconds
-        } else if (status.status === 'done') {
-          toast.success(`${status.extracted_count}개의 문제가 추출되었습니다.`)
-        } else if (status.status === 'error') {
-          toast.error(status.error_message || "알 수 없는 오류가 발생했습니다.")
+        if (job.status === 'running' || job.status === 'queued') {
+          setTimeout(poll, 2000)
+        } else if (job.status === 'done') {
+          toast.success(`${job.extracted_count}문항을 뽑았습니다`)
+        } else if (job.status === 'error') {
+          toast.error(job.error_message || "알 수 없는 오류가 발생했습니다.")
         }
       } catch (error) {
         console.error('Polling error:', error)
       }
     }
-
     poll()
   }
 
-  const handleRetry = () => {
-    if (uploadStatus.jobId) {
-      pollJobStatus(uploadStatus.jobId)
-    }
-  }
-
-  const handlePasswordSubmit = async () => {
-    if (!uploadStatus.jobId || !password.trim()) {
-      toast.error("비밀번호를 입력해주세요.")
-      return
-    }
+  const upload = async () => {
+    if (!selectedFile) return
 
     try {
-      setUploadStatus(prev => ({ ...prev, status: 'uploading', progress: 15, stage: '비밀번호 확인 중...' }))
+      setStatus({ ...IDLE, status: 'uploading', stage: '업로드 중' })
+      const response = await uploadPdf(selectedFile, undefined, sessionName.trim() || undefined)
 
-      // Unlock encrypted PDF
-      await unlockEncryptedPdf(uploadStatus.jobId, password)
+      if (response.encrypted && response.needs_password) {
+        setStatus({
+          ...IDLE,
+          jobId: response.job_id,
+          status: 'needs_password',
+          stage: '비밀번호가 필요합니다',
+        })
+        return
+      }
 
-      setUploadStatus(prev => ({
-        ...prev,
-        status: 'queued',
-        progress: 20,
-        stage: '암호화 해제 완료, 처리 시작 중...'
-      }))
-
-      // Clear password from memory
-      setPassword('')
-
-      // Start polling for status
-      pollJobStatus(uploadStatus.jobId)
-
-      toast.success("PDF 잠금이 해제되었습니다. 분석을 시작합니다.")
-
+      setStatus((prev) => ({ ...prev, jobId: response.job_id, status: 'queued', stage: '대기 중' }))
+      await startImport(response.job_id)
+      pollJobStatus(response.job_id)
     } catch (error) {
-      console.error('Password unlock error:', error)
-      setUploadStatus(prev => ({
-        ...prev,
-        status: 'needs_password',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error'
-      }))
-      toast.error(error instanceof Error ? error.message : "비밀번호가 올바르지 않습니다.")
+      const message = error instanceof Error ? error.message : "업로드에 실패했습니다."
+      setStatus((prev) => ({ ...prev, status: 'error', errorMessage: message }))
+      toast.error(message)
     }
   }
 
-  const resetUpload = () => {
-    setSelectedFile(null)
-    setPassword('')
-    setUploadStatus({
-      status: 'idle',
-      progress: 0,
-      stage: '',
-      logs: [],
-      extractedCount: 0
-    })
+  const unlock = async () => {
+    if (!status.jobId || !password.trim()) return
+
+    try {
+      setStatus((prev) => ({ ...prev, status: 'uploading', stage: '비밀번호 확인 중' }))
+      await unlockEncryptedPdf(status.jobId, password)
+      setPassword('')
+      setStatus((prev) => ({ ...prev, status: 'queued', stage: '대기 중' }))
+      pollJobStatus(status.jobId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "비밀번호가 올바르지 않습니다."
+      setStatus((prev) => ({ ...prev, status: 'needs_password', errorMessage: message }))
+      toast.error(message)
+    }
   }
 
+  const reset = () => {
+    setSelectedFile(null)
+    setSessionName('')
+    setPassword('')
+    setStatus(IDLE)
+  }
+
+  const busy = status.status === 'uploading' || status.status === 'queued' || status.status === 'running'
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/20 dark:from-background dark:via-primary/10 dark:to-purple-950/20">
-      {/* Header */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80">
-                <Upload className="h-6 w-6 text-primary-foreground" />
-              </div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                PDF 업로드
-              </h1>
+    <div className="min-h-screen">
+      <SiteHeader />
+
+      <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+        <h1 className="text-2xl font-semibold">문제집 올리기</h1>
+        <div className="space-y-4 rounded-lg border bg-card p-6">
+          <UploadDropzone onFileSelect={selectFile} selectedFile={selectedFile} />
+
+          {selectedFile && status.status === 'idle' && (
+            <div className="flex gap-2">
+              <Input
+                value={sessionName}
+                onChange={(e) => setSessionName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && upload()}
+                placeholder="세션 이름 (선택)"
+                aria-label="세션 이름"
+              />
+              <Button onClick={upload} className="shrink-0">분석 시작</Button>
             </div>
-            <Button variant="ghost" onClick={() => window.history.back()}>
-              뒤로 가기
-            </Button>
+          )}
+
+          {status.status === 'needs_password' && (
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && unlock()}
+                placeholder="PDF 비밀번호"
+                aria-label="PDF 비밀번호"
+              />
+              <Button onClick={unlock} disabled={!password.trim()} className="shrink-0">
+                잠금 해제
+              </Button>
+            </div>
+          )}
+
+          {busy && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{status.stage}</span>
+                <span className="tabular-nums text-muted-foreground">{status.progress}%</span>
+              </div>
+              <Progress value={status.progress} />
+            </div>
+          )}
+
+          {status.status === 'done' && (
+            <div className="flex items-center justify-between gap-4 rounded-lg bg-secondary px-4 py-3">
+              <p className="text-sm">
+                <span className="tabular-nums font-semibold text-primary">{status.extractedCount}</span>문항을 뽑았습니다
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={reset}>다른 파일</Button>
+                <Button size="sm" onClick={() => router.push('/')}>세션 목록</Button>
+              </div>
+            </div>
+          )}
+
+          {status.status === 'error' && status.errorMessage && (
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/40 bg-red-50 px-4 py-3">
+              <p className="text-sm text-destructive">{status.errorMessage}</p>
+              <Button variant="outline" size="sm" onClick={reset}>다시</Button>
+            </div>
+          )}
+        </div>
+
+        {status.logs.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold">처리 기록</h2>
+            <ul className="space-y-1 rounded-lg border bg-card p-4 font-mono text-xs text-muted-foreground">
+              {status.logs.slice(-12).map((log, index) => (
+                <li key={index} className="break-all">{log}</li>
+              ))}
+            </ul>
           </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          {/* Upload Section */}
-          <AnimatePresence mode="wait">
-            {uploadStatus.status === 'idle' && (
-              <motion.div
-                key="upload"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="space-y-6"
-              >
-                <Card className="border border-border/60 hover:border-primary/30 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="h-5 w-5 text-primary" />
-                      PDF 파일 업로드
-                    </CardTitle>
-                    <CardDescription>
-                      문제가 포함된 PDF 파일을 업로드하여 자동으로 플래시카드를 생성하세요
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <UploadDropzone onFileSelect={handleFileSelect} selectedFile={selectedFile} />
-
-                    {selectedFile && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="mt-6 p-4 bg-primary/5 dark:bg-primary/10 rounded-lg border border-primary/20"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <FileText className="h-8 w-8 text-primary" />
-                            <div>
-                              <p className="font-medium">{selectedFile.name}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button variant="outline" onClick={resetUpload}>
-                              제거
-                            </Button>
-                            <Button onClick={handleUpload} className="group">
-                              분석 시작
-                              <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                            </Button>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
-
-            {(uploadStatus.status !== 'idle') && (
-              <motion.div
-                key="processing"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
-                {/* Progress Card */}
-                <Card className="border border-border/60 bg-gradient-to-br from-card via-primary/3 to-purple-50/30 dark:from-slate-900/80 dark:via-primary/8 dark:to-purple-950/30">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-2">
-                        {uploadStatus.status === 'done' ? (
-                          <CheckCircle className="h-5 w-5 text-green-500" />
-                        ) : uploadStatus.status === 'error' ? (
-                          <AlertCircle className="h-5 w-5 text-red-500" />
-                        ) : (
-                          <motion.div
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                          >
-                            <Upload className="h-5 w-5 text-primary" />
-                          </motion.div>
-                        )}
-                        PDF 분석 진행상황
-                      </CardTitle>
-                      <Badge variant={
-                        uploadStatus.status === 'done' ? 'default' :
-                        uploadStatus.status === 'error' ? 'destructive' :
-                        uploadStatus.status === 'needs_password' ? 'secondary' : 'secondary'
-                      }>
-                        {uploadStatus.status === 'uploading' ? '업로드 중' :
-                         uploadStatus.status === 'needs_password' ? '비밀번호 필요' :
-                         uploadStatus.status === 'queued' ? '대기 중' :
-                         uploadStatus.status === 'running' ? '분석 중' :
-                         uploadStatus.status === 'done' ? '완료' : '오류'}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>{uploadStatus.stage || '준비 중...'}</span>
-                        <span>{uploadStatus.progress}%</span>
-                      </div>
-                      <Progress value={uploadStatus.progress} className="h-3" />
-                    </div>
-
-                    {uploadStatus.status === 'needs_password' && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="p-4 bg-yellow-50 dark:bg-yellow-950/20 rounded-lg border border-yellow-200 dark:border-yellow-800"
-                      >
-                        <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300 mb-3">
-                          <Lock className="h-5 w-5" />
-                          <span className="font-medium">암호화된 PDF 파일</span>
-                        </div>
-                        <p className="text-sm text-yellow-600 dark:text-yellow-400 mb-3">
-                          이 PDF 파일은 암호화되어 있습니다. 비밀번호를 입력해주세요.
-                        </p>
-                        <div className="flex gap-2">
-                          <Input
-                            type="password"
-                            placeholder="비밀번호 입력"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            onKeyPress={(e) => {
-                              if (e.key === 'Enter') {
-                                handlePasswordSubmit()
-                              }
-                            }}
-                            className="flex-1"
-                          />
-                          <Button onClick={handlePasswordSubmit} disabled={!password.trim()}>
-                            <Key className="mr-2 h-4 w-4" />
-                            확인
-                          </Button>
-                        </div>
-                        {uploadStatus.errorMessage && (
-                          <p className="text-sm text-red-600 dark:text-red-400 mt-2">
-                            {uploadStatus.errorMessage}
-                          </p>
-                        )}
-                      </motion.div>
-                    )}
-
-                    {uploadStatus.status === 'done' && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800"
-                      >
-                        <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-                          <CheckCircle className="h-5 w-5" />
-                          <span className="font-medium">
-                            분석 완료! {uploadStatus.extractedCount}개의 문제가 추출되었습니다.
-                          </span>
-                        </div>
-                        <Button className="mt-3 w-full" onClick={() => window.location.href = '/study'}>
-                          <BookOpen className="mr-2 h-4 w-4" />
-                          학습 시작하기
-                        </Button>
-                      </motion.div>
-                    )}
-
-                    {uploadStatus.status === 'error' && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="p-4 bg-red-50 dark:bg-red-950/20 rounded-lg border border-red-200 dark:border-red-800"
-                      >
-                        <div className="flex items-center gap-2 text-red-700 dark:text-red-300 mb-2">
-                          <AlertCircle className="h-5 w-5" />
-                          <span className="font-medium">분석 실패</span>
-                        </div>
-                        <p className="text-sm text-red-600 dark:text-red-400 mb-3">
-                          {uploadStatus.errorMessage || '알 수 없는 오류가 발생했습니다.'}
-                        </p>
-                        <div className="flex gap-2">
-                          <Button variant="outline" onClick={handleRetry} className="flex-1">
-                            다시 시도
-                          </Button>
-                          <Button onClick={resetUpload} className="flex-1">
-                            새 파일 업로드
-                          </Button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Logs Card */}
-                {uploadStatus.logs.length > 0 && (
-                  <Card className="border border-border/60 bg-gradient-to-br from-card via-slate-50/30 to-gray-50/30 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-gray-900/50">
-                    <CardHeader>
-                      <CardTitle className="text-lg">처리 로그</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="bg-muted/50 rounded-lg p-4 max-h-60 overflow-y-auto font-mono text-sm">
-                        {uploadStatus.logs.map((log, index) => (
-                          <div key={index} className="py-1 border-b border-border/30 last:border-0">
-                            {log}
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        )}
       </main>
     </div>
   )

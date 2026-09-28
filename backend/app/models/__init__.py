@@ -3,5 +3,6 @@ from .session import Session, SessionProblem, SessionStatus
 from .attempt import Attempt
 from .user import User
 from .upload import SourceDoc, ImportJob, ImportStatus
+from .review import ReviewCard
 
-__all__ = ["Problem", "ProblemChoice", "Session", "SessionProblem", "SessionStatus", "Attempt", "User", "SourceDoc", "ImportJob", "ImportStatus"]
+__all__ = ["Problem", "ProblemChoice", "Session", "SessionProblem", "SessionStatus", "Attempt", "User", "SourceDoc", "ImportJob", "ImportStatus", "ReviewCard"]

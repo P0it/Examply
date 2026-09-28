@@ -14,5 +14,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/your-org/examply.git"
+  },
+  "scripts": {
+    "dev:all": "node dev.js"
   }
 }

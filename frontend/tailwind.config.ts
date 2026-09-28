@@ -1,7 +1,6 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
-  darkMode: ["class"],
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -17,7 +16,29 @@ const config: Config = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: [
+          "var(--font-inter)",
+          '"Pretendard Variable"',
+          "Pretendard",
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
+      },
+      boxShadow: {
+        sm: "0 2px 4px 0 rgba(40, 46, 62, 0.1)",
+        md: "0 4px 16px 0 rgba(40, 46, 62, 0.1)",
+      },
       colors: {
+        subtle: "hsl(var(--subtle))",
+        // Decorative only — the four SAA domain cards on /guide, never controls.
+        pastel: {
+          cyan: "#c7efff",
+          magenta: "#ffd6ec",
+          violet: "#dbdfff",
+          peach: "#ffe0c7",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -54,8 +75,8 @@ const config: Config = {
       },
       borderRadius: {
         lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        md: "calc(var(--radius) - 4px)",
+        sm: "calc(var(--radius) - 6px)",
       },
       keyframes: {
         "accordion-down": {

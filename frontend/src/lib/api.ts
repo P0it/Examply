@@ -265,6 +265,67 @@ export const getSessions = (params?: {
   return apiRequest(`/sessions/list?${searchParams}`)
 }
 
+export const toggleSessionBookmark = (sessionId: number) =>
+  apiRequest<{ problem_id: number; is_bookmarked: boolean }>(`/sessions/${sessionId}/bookmark`, { method: 'POST' })
+
+export const skipCurrentProblem = (sessionId: number) =>
+  apiRequest<{ current_index: number; total_problems: number }>(`/sessions/${sessionId}/skip`, { method: 'POST' })
+
+export const gotoProblem = (sessionId: number, index: number) =>
+  apiRequest<{ current_index: number; total_problems: number }>(`/sessions/${sessionId}/goto`, {
+    method: 'POST',
+    body: JSON.stringify({ index })
+  })
+
+export interface ReviewStats {
+  tracked: number
+  due_now: number
+  due_today: number
+  learning: number
+  review: number
+  lapses: number
+}
+
+export const getReviewStats = (sessionId: number) =>
+  apiRequest<ReviewStats>(`/sessions/${sessionId}/review/stats`)
+
+export interface DueProblem {
+  problem: {
+    id: number
+    question_text: string
+    choices: Array<{ choice_index: number; text: string }>
+    correct_answer_index?: number
+    explanation?: string
+  } | null
+  remaining: number
+  position?: number
+  lapses?: number
+  reps?: number
+}
+
+// answeredIds keeps a problem from being asked twice in one sitting.
+export const getNextDueProblem = (sessionId: number, answeredIds: number[] = []) =>
+  apiRequest<DueProblem>(
+    `/sessions/${sessionId}/review/next?exclude=${answeredIds.join(',')}`
+  )
+
+export interface ReviewAnswerResult {
+  is_correct: boolean
+  correct_answer_index?: number
+  rating: string
+  next_due: string
+  interval_days: number | null
+  remaining: number
+}
+
+export const answerDueProblem = (
+  sessionId: number,
+  data: { problem_id: number; choice_index: number; rating?: string }
+) => apiRequest<ReviewAnswerResult>(`/sessions/${sessionId}/review/answer`, {
+  method: 'POST',
+  body: JSON.stringify(data)
+})
+
 export const getSessionDetail = (sessionId: number) =>
   apiRequest(`/sessions/${sessionId}`)
 

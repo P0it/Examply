@@ -64,11 +64,11 @@ chmod +x scripts/setup.sh
 
 ### 2. Start Development
 ```bash
-# Start both backend and frontend
-make dev
+# Start both backend and frontend (any OS, run from repo root)
+npm run dev:all
 
 # Or start individually
-make dev-backend    # http://localhost:8000
+make dev-backend    # http://localhost:8010
 make dev-frontend   # http://localhost:3000
 ```
 
@@ -84,7 +84,7 @@ make health
 ## 📖 Available Commands
 
 ### Development
-- `make dev` - Start both servers
+- `npm run dev:all` - Start both servers (any OS)
 - `make install` - Install all dependencies
 - `make health` - Check system health
 
@@ -104,9 +104,9 @@ make health
 ## 🌐 Access Points
 
 - **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
+- **Backend API**: http://localhost:8010
+- **API Documentation**: http://localhost:8010/docs
+- **Health Check**: http://localhost:8010/health
 
 ## 🎯 Key Features Implemented
 

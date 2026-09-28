@@ -27,6 +27,8 @@ def setup_env_file():
 
 def main():
     """Main development server startup."""
+    # Korean Windows consoles default to cp949, which can't print the emoji below.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print("🚀 Starting Examply backend development server...")
 
     # Setup environment file

@@ -294,16 +294,34 @@ class AdapterEngine:
             found_choices = []
             found_lines = []
 
+            in_choice = False
             for line in lines:
                 line_stripped = line.strip()
+                matched_marker = None
                 for marker in marker_set:
                     if line_stripped.startswith(marker):
-                        choice_text = line_stripped[len(marker):].strip()
-                        # Only add if choice text is meaningful (not just a marker)
-                        if choice_text and len(choice_text) > 1:
-                            found_choices.append(choice_text)
-                            found_lines.append(line)
-                        break  # Found marker, no need to check other markers for this line
+                        matched_marker = marker
+                        break
+
+                if matched_marker:
+                    choice_text = line_stripped[len(matched_marker):].strip()
+                    # Only add if choice text is meaningful (not just a marker)
+                    if choice_text and len(choice_text) > 1:
+                        found_choices.append(choice_text)
+                        found_lines.append(line)
+                        in_choice = True
+                    else:
+                        in_choice = False
+                    continue
+
+                # A choice often wraps over several lines in the PDF. Keep folding
+                # the following lines into it until the next marker or the answer key.
+                if in_choice and line_stripped:
+                    if (self._is_answer_line(line_stripped, adapter)
+                            or self._is_explanation_line(line_stripped, adapter)):
+                        in_choice = False
+                        continue
+                    found_choices[-1] = f"{found_choices[-1]} {line_stripped}"
 
             # Use the marker set that found the most choices (and at least 2)
             if len(found_choices) >= 2 and len(found_choices) > len(choices):
@@ -358,11 +376,16 @@ class AdapterEngine:
             if match:
                 answer_text = match.group(1).strip()
 
-                # Map answer to choice index
+                # Map answer to choice index. The answer key holds a bare letter
+                # ("A"), while markers carry punctuation ("A." / "A)"), so compare
+                # both the raw marker and its stripped form.
                 choice_markers = adapter.get('choice_markers', [])
                 for marker_set in choice_markers:
-                    if answer_text in marker_set:
-                        return marker_set.index(answer_text)
+                    for index, marker in enumerate(marker_set):
+                        stripped = marker.strip('.)】]> ')
+                        if answer_text == marker or answer_text.upper() == stripped.upper():
+                            if index < len(choices):
+                                return index
 
         return None
 
@@ -375,7 +398,9 @@ class AdapterEngine:
             match = re.search(pattern, block, re.MULTILINE | re.IGNORECASE)
             if match:
                 explanation = match.group(1).strip()
-                if explanation:
+                # A marker sometimes sits alone on a line with a stray bullet after
+                # it. Anything that short is noise, not a solution.
+                if len(explanation) >= 10:
                     return explanation
 
         return None

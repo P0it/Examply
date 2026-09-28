@@ -1,14 +1,13 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "react-hot-toast";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "Examply - 스마트한 문제 풀이 학습",
-  description: "PDF 문제집을 AI로 분석하여 개인 맞춤형 플래시카드 학습을 제공합니다",
+  title: "Examply",
+  description: "PDF 문제집에서 문제를 뽑아 한 문제씩 풉니다.",
 };
 
 export default function RootLayout({
@@ -17,51 +16,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko" suppressHydrationWarning>
-      <body className={`${inter.className} antialiased`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
-          {children}
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              style: {
-                borderRadius: '10px',
-                background: '#333',
-                color: '#fff',
-                border: '1px solid #444',
-              },
-              success: {
-                iconTheme: {
-                  primary: '#10b981',
-                  secondary: '#fff',
-                },
-                style: {
-                  borderRadius: '10px',
-                  background: '#333',
-                  color: '#fff',
-                  border: '1px solid #10b981',
-                },
-              },
-              error: {
-                iconTheme: {
-                  primary: '#ef4444',
-                  secondary: '#fff',
-                },
-                style: {
-                  borderRadius: '10px',
-                  background: '#333',
-                  color: '#fff',
-                  border: '1px solid #ef4444',
-                },
-              },
-            }}
-          />
-        </ThemeProvider>
+    <html lang="ko">
+      <body className={`${inter.variable} font-sans antialiased`}>
+        {children}
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            style: {
+              borderRadius: '8px',
+              background: '#ffffff',
+              color: '#282e3e',
+              border: '1px solid #d9dde8',
+              boxShadow: '0 4px 16px 0 rgba(40, 46, 62, 0.1)',
+              fontSize: '14px',
+            },
+            success: { iconTheme: { primary: '#10b981', secondary: '#ffffff' } },
+            error: { iconTheme: { primary: '#ef4444', secondary: '#ffffff' } },
+          }}
+        />
       </body>
     </html>
   );

@@ -1,12 +1,14 @@
 'use client'
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { ArrowLeft, Bookmark, SkipForward, Eye, ArrowRight } from "lucide-react"
+import { Clock, Flag } from "lucide-react"
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
-import { API_BASE_URL } from '@/lib/api'
+import { useCallback, useEffect, useState, Suspense } from 'react'
+import { API_BASE_URL, gotoProblem, skipCurrentProblem, toggleSessionBookmark } from '@/lib/api'
+import { ProblemView } from '@/components/problem-view'
+import toast from 'react-hot-toast'
 
 interface Problem {
   id: string
@@ -14,6 +16,8 @@ interface Problem {
   choices: Array<{ choice_index: number; text: string }>
   correct_answer_index?: number
   explanation?: string
+  is_bookmarked?: boolean
+  is_skipped?: boolean
 }
 
 interface Session {
@@ -29,18 +33,31 @@ interface SessionProgress {
   progress_percentage: number
 }
 
-export default function StudyPage() {
+function StudyPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const sessionId = searchParams.get('session')
+  const requestedIndex = searchParams.get('problem')
 
   const [session, setSession] = useState<Session | null>(null)
   const [currentProblem, setCurrentProblem] = useState<Problem | null>(null)
   const [sessionProgress, setSessionProgress] = useState<SessionProgress | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null)
-  const [showAnswer, setShowAnswer] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
+  const [jumpTo, setJumpTo] = useState('')
+
+  const refresh = useCallback(async () => {
+    if (!sessionId) return
+    const [progressResponse, problemResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`),
+      fetch(`${API_BASE_URL}/sessions/${sessionId}/current-problem`),
+    ])
+    if (progressResponse.ok) setSessionProgress(await progressResponse.json())
+    setCurrentProblem(problemResponse.ok ? await problemResponse.json() : null)
+    setSelectedChoice(null)
+    setIsSubmitted(false)
+  }, [sessionId])
 
   useEffect(() => {
     if (!sessionId) {
@@ -48,37 +65,17 @@ export default function StudyPage() {
       return
     }
 
-    const fetchSessionData = async () => {
+    const load = async () => {
       try {
-        // Fetch session details
         const sessionResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}`)
-        if (!sessionResponse.ok) {
-          throw new Error('Session not found')
-        }
-        const sessionData = await sessionResponse.json()
-        setSession(sessionData)
+        if (!sessionResponse.ok) throw new Error('Session not found')
+        setSession(await sessionResponse.json())
 
-        // Fetch session progress/status
-        const progressResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`)
-        if (progressResponse.ok) {
-          const progressData = await progressResponse.json()
-          setSessionProgress(progressData)
-        } else {
-          // Default progress if not started
-          setSessionProgress({
-            current_index: 1,
-            total_problems: sessionData.total_problems,
-            progress_percentage: 0
-          })
+        // A review link can point straight at one problem: /study?session=1&problem=42
+        if (requestedIndex) {
+          await gotoProblem(Number(sessionId), Number(requestedIndex)).catch(() => null)
         }
-
-        // Fetch current problem
-        const problemResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/current-problem`)
-        if (problemResponse.ok) {
-          const problemData = await problemResponse.json()
-          setCurrentProblem(problemData)
-        }
-
+        await refresh()
       } catch (error) {
         console.error('Error fetching session data:', error)
         // Session unavailable (not found or backend down) — return home
@@ -88,292 +85,230 @@ export default function StudyPage() {
       }
     }
 
-    fetchSessionData()
-  }, [sessionId, router])
+    load()
+  }, [sessionId, requestedIndex, router, refresh])
 
-  const handleChoiceSelect = (choiceIndex: number) => {
-    if (!isSubmitted) {
-      setSelectedChoice(choiceIndex)
-    }
-  }
+  const submitAnswer = useCallback(async () => {
+    if (selectedChoice === null || !sessionId || isSubmitted) return
 
-  const handleSubmitAnswer = async () => {
-    if (selectedChoice === null || !sessionId) return
-
+    setIsSubmitted(true)
     try {
-      setIsSubmitted(true)
-      setShowAnswer(true)
-
-      // Submit answer to backend
-      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/submit-answer`, {
+      await fetch(`${API_BASE_URL}/sessions/${sessionId}/submit-answer`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          choice_index: selectedChoice
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice_index: selectedChoice })
       })
-
-      if (!response.ok) {
-        console.error('Failed to submit answer')
-      }
+      const progressResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`)
+      if (progressResponse.ok) setSessionProgress(await progressResponse.json())
     } catch (error) {
       console.error('Error submitting answer:', error)
     }
-  }
+  }, [selectedChoice, sessionId, isSubmitted])
 
-  const handleNextProblem = async () => {
+  const goToNextProblem = useCallback(async () => {
     if (!sessionId) return
-
     try {
-      // Move to next problem
-      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/next`, {
-        method: 'POST'
-      })
-
-      if (response.ok) {
-        // Reset states
-        setSelectedChoice(null)
-        setShowAnswer(false)
-        setIsSubmitted(false)
-
-        // Refresh data
-        const progressResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`)
-        if (progressResponse.ok) {
-          const progressData = await progressResponse.json()
-          setSessionProgress(progressData)
-        }
-
-        const problemResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/current-problem`)
-        if (problemResponse.ok) {
-          const problemData = await problemResponse.json()
-          setCurrentProblem(problemData)
-        }
-      } else {
-        console.error('Failed to move to next problem')
+      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/next`, { method: 'POST' })
+      if (!response.ok) {
+        toast('마지막 문제입니다')
+        return
       }
+      await refresh()
     } catch (error) {
       console.error('Error moving to next problem:', error)
     }
+  }, [sessionId, refresh])
+
+  const skip = useCallback(async () => {
+    if (!sessionId) return
+    try {
+      await skipCurrentProblem(Number(sessionId))
+      await refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "스킵하지 못했습니다.")
+    }
+  }, [sessionId, refresh])
+
+  const bookmark = useCallback(async () => {
+    if (!sessionId) return
+    try {
+      const { is_bookmarked } = await toggleSessionBookmark(Number(sessionId))
+      setCurrentProblem((prev) => (prev ? { ...prev, is_bookmarked } : prev))
+      const progressResponse = await fetch(`${API_BASE_URL}/sessions/${sessionId}/progress`)
+      if (progressResponse.ok) setSessionProgress(await progressResponse.json())
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "북마크하지 못했습니다.")
+    }
+  }, [sessionId])
+
+  const previous = useCallback(async () => {
+    if (!sessionId || !sessionProgress || sessionProgress.current_index <= 1) return
+    try {
+      await gotoProblem(Number(sessionId), sessionProgress.current_index - 1)
+      await refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "이동하지 못했습니다.")
+    }
+  }, [sessionId, sessionProgress, refresh])
+
+  const jump = async () => {
+    const index = Number(jumpTo)
+    if (!sessionId || !Number.isInteger(index)) return
+    try {
+      await gotoProblem(Number(sessionId), index)
+      setJumpTo('')
+      await refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "이동하지 못했습니다.")
+    }
   }
 
-  const handleShowExplanation = () => {
-    setShowAnswer(true)
-  }
+  // 1-4 picks a choice, Enter submits then moves on, B bookmarks, S skips.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!currentProblem) return
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        if (isSubmitted) goToNextProblem()
+        else submitAnswer()
+        return
+      }
+
+      const key = event.key.toLowerCase()
+      if (key === 'b') { bookmark(); return }
+      if (key === 's') { skip(); return }
+
+      const index = Number(event.key) - 1
+      if (!isSubmitted && index >= 0 && index < currentProblem.choices.length) {
+        setSelectedChoice(index)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [currentProblem, isSubmitted, submitAnswer, goToNextProblem, bookmark, skip])
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">세션 로딩 중...</p>
-        </div>
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-muted-foreground">불러오는 중</p>
       </div>
     )
   }
 
   if (!session || !sessionProgress) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-muted-foreground">세션을 찾을 수 없습니다.</p>
-          <Button onClick={() => router.push('/')} className="mt-4">
-            홈으로 돌아가기
-          </Button>
-        </div>
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4">
+        <p className="text-sm text-muted-foreground">세션을 찾을 수 없습니다</p>
+        <Button variant="outline" onClick={() => router.push('/')}>홈으로</Button>
       </div>
     )
   }
 
+  const examButton = "h-9 rounded border border-slate-400 bg-gradient-to-b from-white to-slate-200 px-5 text-sm font-medium text-slate-800 hover:to-slate-300 disabled:opacity-50"
+
+  // Pearson VUE layout: navy title bar, gray status strip (timer, position,
+  // flag), white question pane, navy bottom bar with the nav buttons.
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="icon" onClick={() => router.push('/')}>
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <div>
-                <h1 className="text-lg font-semibold">{session.name}</h1>
-                <p className="text-sm text-muted-foreground">
-                  문제 {sessionProgress.current_index}/{sessionProgress.total_problems}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-muted-foreground">진행률</span>
-              <div className="w-32">
-                <Progress value={sessionProgress.progress_percentage} className="h-2" />
-              </div>
-              <span className="text-sm font-medium">{sessionProgress.progress_percentage}%</span>
-            </div>
-          </div>
-        </div>
+    <div className="flex min-h-screen flex-col bg-white">
+      <header className="flex h-10 items-center gap-4 bg-[#1f3b5c] px-4 text-sm text-white">
+        <span className="truncate font-semibold">{session.name}</span>
+        <button onClick={() => router.push('/')} className="ml-auto shrink-0 text-xs text-white/80 hover:text-white">
+          학습 종료
+        </button>
       </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          {/* Problem Card */}
-          {currentProblem ? (
-            <Card className="mb-8">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xl">문제 {sessionProgress.current_index}</CardTitle>
-                  <div className="flex space-x-2">
-                    <Button variant="outline" size="sm">
-                      <Bookmark className="h-4 w-4 mr-1" />
-                      북마크
-                    </Button>
-                    <Button variant="outline" size="sm">
-                      <SkipForward className="h-4 w-4 mr-1" />
-                      스킵
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Question */}
-                <div className="text-lg font-medium leading-relaxed">
-                  {currentProblem.question_text}
-                </div>
-
-                {/* Choices */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {currentProblem.choices.map((choice) => {
-                    const isSelected = selectedChoice === choice.choice_index
-                    const isCorrect = showAnswer && choice.choice_index === currentProblem.correct_answer_index
-                    const isWrong = showAnswer && isSelected && choice.choice_index !== currentProblem.correct_answer_index
-
-                    return (
-                      <Button
-                        key={choice.choice_index}
-                        variant="outline"
-                        onClick={() => handleChoiceSelect(choice.choice_index)}
-                        disabled={isSubmitted}
-                        className={`h-auto p-4 text-left justify-start transition-all ${
-                          isSelected && !showAnswer ? 'bg-primary/10 border-primary' :
-                          isCorrect ? 'bg-green-100/50 dark:bg-green-900/30 border-green-500 text-green-700 dark:text-green-300' :
-                          isWrong ? 'bg-red-100/50 dark:bg-red-900/30 border-red-500 text-red-700 dark:text-red-300' :
-                          'hover:bg-primary/5 hover:border-primary'
-                        } ${isSubmitted ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                      >
-                        <div className="flex items-start space-x-3 w-full">
-                          <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center text-sm font-medium ${
-                            isSelected && !showAnswer ? 'border-primary bg-primary text-primary-foreground' :
-                            isCorrect ? 'border-green-500 bg-green-500 text-white' :
-                            isWrong ? 'border-red-500 bg-red-500 text-white' :
-                            'border-current'
-                          }`}>
-                            {choice.choice_index + 1}
-                          </div>
-                          <div className="flex-grow text-sm leading-relaxed">
-                            {choice.text}
-                          </div>
-                        </div>
-                      </Button>
-                    )
-                  })}
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex justify-center space-x-4 pt-4">
-                  {!isSubmitted ? (
-                    <Button
-                      size="lg"
-                      className="px-8"
-                      onClick={handleSubmitAnswer}
-                      disabled={selectedChoice === null}
-                    >
-                      답안 제출
-                    </Button>
-                  ) : (
-                    <Button
-                      size="lg"
-                      className="px-8"
-                      onClick={handleNextProblem}
-                    >
-                      다음 문제
-                      <ArrowRight className="h-4 w-4 ml-2" />
-                    </Button>
-                  )}
-
-                  {!showAnswer && (
-                    <Button
-                      variant="outline"
-                      size="lg"
-                      onClick={handleShowExplanation}
-                    >
-                      <Eye className="h-4 w-4 mr-2" />
-                      풀이 보기
-                    </Button>
-                  )}
-                </div>
-
-                {/* Explanation */}
-                {showAnswer && currentProblem.explanation && (
-                  <div className="mt-6 p-4 bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                    <h4 className="font-medium text-blue-900 dark:text-blue-300 mb-2">풀이</h4>
-                    <p className="text-blue-800 dark:text-blue-200 text-sm leading-relaxed">
-                      {currentProblem.explanation}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="mb-8">
-              <CardContent className="py-8 text-center">
-                <p className="text-muted-foreground">문제를 불러오는 중...</p>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Keyboard Shortcuts */}
-          <Card className="mb-8">
-            <CardContent className="py-4">
-              <div className="flex items-center justify-center space-x-8 text-sm text-muted-foreground">
-                <div className="flex items-center space-x-1">
-                  <kbd className="px-2 py-1 bg-muted rounded text-xs">1-4</kbd>
-                  <span>선택지</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <kbd className="px-2 py-1 bg-muted rounded text-xs">Enter</kbd>
-                  <span>제출</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <kbd className="px-2 py-1 bg-muted rounded text-xs">S</kbd>
-                  <span>스킵</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <kbd className="px-2 py-1 bg-muted rounded text-xs">B</kbd>
-                  <span>북마크</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <kbd className="px-2 py-1 bg-muted rounded text-xs">E</kbd>
-                  <span>풀이</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Navigation */}
-          <div className="flex justify-between items-center">
-            <Button variant="outline" disabled>
-              이전 문제
-            </Button>
-            {isSubmitted && (
-              <Button onClick={handleNextProblem}>
-                다음 문제
-                <ArrowRight className="h-4 w-4 ml-2" />
-              </Button>
-            )}
-          </div>
+      <div className="flex h-10 items-center gap-4 border-b border-slate-300 bg-slate-100 px-4 text-sm text-slate-800">
+        <ElapsedTimer />
+        <div className="flex items-center gap-1">
+          <span>Question</span>
+          <Input
+            value={jumpTo}
+            onChange={(e) => setJumpTo(e.target.value.replace(/\D/g, ''))}
+            onKeyDown={(e) => e.key === 'Enter' && jump()}
+            placeholder={String(sessionProgress.current_index)}
+            aria-label="문제 번호로 이동"
+            className="h-7 w-14 rounded-sm bg-white px-1 text-center text-sm tabular-nums"
+          />
+          <span className="tabular-nums">of {sessionProgress.total_problems}</span>
         </div>
+        {currentProblem && (
+          <label className="ml-auto flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={Boolean(currentProblem.is_bookmarked)}
+              onChange={bookmark}
+              className="h-4 w-4 accent-[#1f3b5c]"
+            />
+            <Flag className="h-4 w-4 text-amber-600" />
+            Flag for Review
+          </label>
+        )}
+      </div>
+      <Progress value={sessionProgress.progress_percentage} className="h-1 rounded-none bg-transparent" />
+
+      <main className="mx-auto w-full max-w-4xl flex-1 space-y-6 px-6 py-8">
+        {currentProblem ? (
+          <ProblemView
+            problem={currentProblem}
+            selected={selectedChoice}
+            onSelect={setSelectedChoice}
+            revealed={isSubmitted}
+          />
+        ) : (
+          <p className="py-16 text-center text-sm text-muted-foreground">문제를 불러오지 못했습니다</p>
+        )}
       </main>
+
+      <footer className="sticky bottom-0 flex h-14 items-center gap-2 bg-[#1f3b5c] px-4">
+        <button className={examButton} onClick={previous} disabled={sessionProgress.current_index <= 1}>
+          ◀ Previous
+        </button>
+        <button className={examButton} onClick={skip} disabled={!currentProblem}>
+          Skip
+        </button>
+        <span className="mx-auto hidden text-xs text-white/60 sm:block">
+          1-4 선택 · Enter 제출 · B 플래그 · S 건너뛰기
+        </span>
+        {isSubmitted ? (
+          <button className={examButton} onClick={goToNextProblem}>
+            Next ▶
+          </button>
+        ) : (
+          <button className={examButton} onClick={submitAnswer} disabled={selectedChoice === null}>
+            Submit
+          </button>
+        )}
+      </footer>
     </div>
+  )
+}
+
+// Counts up from page load, like the exam clock but without a limit.
+function ElapsedTimer() {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const hh = String(Math.floor(seconds / 3600)).padStart(2, '0')
+  const mm = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')
+  const ss = String(seconds % 60).padStart(2, '0')
+  return (
+    <span className="flex items-center gap-1 tabular-nums">
+      <Clock className="h-4 w-4" />
+      경과 {hh}:{mm}:{ss}
+    </span>
+  )
+}
+
+export default function StudyPage() {
+  return (
+    <Suspense>
+      <StudyPageContent />
+    </Suspense>
   )
 }

@@ -13,6 +13,19 @@ from app.models.attempt import Attempt
 router = APIRouter()
 
 
+def _position_in_session(session: Session, session_id, problem_id) -> int | None:
+    """1-based position of a problem inside its session, for jump-to links."""
+    if session_id is None:
+        return None
+    session_problem = session.exec(
+        select(SessionProblem).where(
+            SessionProblem.session_id == session_id,
+            SessionProblem.problem_id == problem_id,
+        )
+    ).first()
+    return session_problem.order_index + 1 if session_problem else None
+
+
 @router.get("/wrong")
 async def get_wrong_answers(
     session: Session = Depends(get_session),
@@ -39,6 +52,8 @@ async def get_wrong_answers(
     for problem, attempt in results:
         problem_data = problem.get_public_data(include_answer=True)
         problem_data["attempt"] = attempt.get_summary()
+        problem_data["session_id"] = attempt.session_id
+        problem_data["position"] = _position_in_session(session, attempt.session_id, problem.id)
         problems_with_attempts.append(problem_data)
 
     return {
@@ -73,6 +88,8 @@ async def get_bookmarked_problems(
     for problem, session_problem in results:
         problem_data = problem.get_public_data()
         problem_data["bookmarked_at"] = session_problem.completed_at
+        problem_data["session_id"] = session_problem.session_id
+        problem_data["position"] = session_problem.order_index + 1
         problems.append(problem_data)
 
     return {
@@ -107,6 +124,8 @@ async def get_skipped_problems(
     for problem, session_problem in results:
         problem_data = problem.get_public_data()
         problem_data["skipped_at"] = session_problem.completed_at
+        problem_data["session_id"] = session_problem.session_id
+        problem_data["position"] = session_problem.order_index + 1
         problems.append(problem_data)
 
     return {

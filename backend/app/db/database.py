@@ -27,7 +27,7 @@ else:
 def create_db_and_tables():
     """Create database tables."""
     # Import all models to ensure they are registered
-    from app.models import Problem, ProblemChoice, Session as ProblemSession, SessionProblem, Attempt, User, SourceDoc, ImportJob
+    from app.models import Problem, ProblemChoice, Session as ProblemSession, SessionProblem, Attempt, User, SourceDoc, ImportJob, ReviewCard
 
     SQLModel.metadata.create_all(engine)
 

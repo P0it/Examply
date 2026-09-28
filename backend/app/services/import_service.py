@@ -137,9 +137,7 @@ class ImportService:
                         job.update_progress(int(progress), f"문제 저장 중... ({saved_count}/{len(parsed_problems)})")
                         session.add(job)
 
-                        # Commit more frequently for better progress visibility
-                        if saved_count % 10 == 0:
-                            session.commit()
+                        session.commit()
 
                     except Exception as e:
                         logger.error(f"Failed to save problem {i}: {e}")
@@ -325,9 +323,7 @@ class ImportService:
                         job.update_progress(int(progress), f"문제 저장 중... ({saved_count}/{len(parsed_problems)})")
                         session.add(job)
 
-                        # Commit more frequently for better progress visibility
-                        if saved_count % 10 == 0:
-                            session.commit()
+                        session.commit()
 
                     except Exception as e:
                         logger.error(f"Failed to save problem {i}: {e}")
@@ -409,6 +405,4 @@ class ImportService:
         job_progress = 10 + int(progress * 0.5)  # More precise calculation
         job.update_progress(job_progress, f"텍스트 추출: {stage}")
         session.add(job)
-        # Only commit every 5% to reduce DB overhead
-        if progress % 5 == 0:
-            session.commit()
+        session.commit()

@@ -284,44 +284,53 @@ class AdapterEngine:
         )
 
     def _extract_choices(self, block: str, adapter: Dict[str, Any]) -> Tuple[List[str], List[str]]:
-        """Extract choices from the block."""
+        """Extract choices from the block, supporting multi-line choice text."""
         choice_markers = adapter.get('choice_markers', [])
         lines = [line.strip() for line in block.split('\n') if line.strip()]
         choices = []
         choice_lines = []
 
+        # Also collect answer/explanation markers to stop continuation lines
+        answer_patterns = adapter.get('answer_patterns', [])
+        explanation_markers = adapter.get('explanation_markers', [])
+
         for marker_set in choice_markers:
             found_choices = []
             found_lines = []
+            current_choice_text = None
+            current_choice_line = None
 
-            in_choice = False
             for line in lines:
                 line_stripped = line.strip()
-                matched_marker = None
+
+                # Check if this line starts a new choice
+                is_new_choice = False
                 for marker in marker_set:
                     if line_stripped.startswith(marker):
-                        matched_marker = marker
+                        # Save previous choice if exists
+                        if current_choice_text and len(current_choice_text) > 1:
+                            found_choices.append(current_choice_text)
+                            found_lines.append(current_choice_line)
+
+                        current_choice_text = line_stripped[len(marker):].strip()
+                        current_choice_line = line
+                        is_new_choice = True
                         break
 
-                if matched_marker:
-                    choice_text = line_stripped[len(matched_marker):].strip()
-                    # Only add if choice text is meaningful (not just a marker)
-                    if choice_text and len(choice_text) > 1:
-                        found_choices.append(choice_text)
-                        found_lines.append(line)
-                        in_choice = True
-                    else:
-                        in_choice = False
-                    continue
+                if not is_new_choice and current_choice_text is not None:
+                    # Check if this line is an answer or explanation marker — stop appending
+                    if self._is_answer_line(line_stripped, adapter) or self._is_explanation_line(line_stripped, adapter):
+                        break
+                    # Continuation line — append to current choice. The marker
+                    # may sit alone on its line, leaving the text empty so far.
+                    current_choice_text = (
+                        f"{current_choice_text} {line_stripped}".strip()
+                    )
 
-                # A choice often wraps over several lines in the PDF. Keep folding
-                # the following lines into it until the next marker or the answer key.
-                if in_choice and line_stripped:
-                    if (self._is_answer_line(line_stripped, adapter)
-                            or self._is_explanation_line(line_stripped, adapter)):
-                        in_choice = False
-                        continue
-                    found_choices[-1] = f"{found_choices[-1]} {line_stripped}"
+            # Don't forget the last choice
+            if current_choice_text and len(current_choice_text) > 1:
+                found_choices.append(current_choice_text)
+                found_lines.append(current_choice_line)
 
             # Use the marker set that found the most choices (and at least 2)
             if len(found_choices) >= 2 and len(found_choices) > len(choices):
@@ -376,16 +385,29 @@ class AdapterEngine:
             if match:
                 answer_text = match.group(1).strip()
 
-                # Map answer to choice index. The answer key holds a bare letter
-                # ("A"), while markers carry punctuation ("A." / "A)"), so compare
-                # both the raw marker and its stripped form.
+                # Map answer to choice index
                 choice_markers = adapter.get('choice_markers', [])
+
                 for marker_set in choice_markers:
-                    for index, marker in enumerate(marker_set):
-                        stripped = marker.strip('.)】]> ')
-                        if answer_text == marker or answer_text.upper() == stripped.upper():
-                            if index < len(choices):
-                                return index
+                    # 1. Exact match (e.g. "①" in ["①", "②", ...])
+                    if answer_text in marker_set:
+                        idx = marker_set.index(answer_text)
+                        if idx < len(choices):
+                            return idx
+
+                    # 2. Prefix match. The answer key holds a bare letter ("A"),
+                    # while markers carry punctuation ("A." / "A)"), so compare
+                    # the marker's stripped form too.
+                    for idx, marker in enumerate(marker_set):
+                        if marker.strip('.)】]> ').upper() == answer_text.upper():
+                            if idx < len(choices):
+                                return idx
+
+                # 3. Numeric answer → 0-based index (e.g. "2" → 1)
+                if answer_text.isdigit():
+                    num = int(answer_text)
+                    if 1 <= num <= len(choices):
+                        return num - 1
 
         return None
 
@@ -394,14 +416,18 @@ class AdapterEngine:
         explanation_markers = adapter.get('explanation_markers', [])
 
         for marker in explanation_markers:
-            pattern = f'{marker}\\s*([\\s\\S]*?)(?=\\n\\n|$)'
-            match = re.search(pattern, block, re.MULTILINE | re.IGNORECASE)
-            if match:
-                explanation = match.group(1).strip()
-                # A marker sometimes sits alone on a line with a stray bullet after
-                # it. Anything that short is noise, not a solution.
-                if len(explanation) >= 10:
-                    return explanation
+            # Find the marker position first, then take everything after it
+            marker_match = re.search(marker, block, re.MULTILINE | re.IGNORECASE)
+            if marker_match:
+                # Get everything after the marker to end of block
+                rest = block[marker_match.end():].strip()
+                if rest:
+                    # Clean up: remove leading bullet characters like ・
+                    rest = re.sub(r'^[・•]\s*', '', rest).strip()
+                    # A marker sometimes sits alone on a line with a stray bullet
+                    # after it. Anything that short is noise, not a solution.
+                    if len(rest) >= 10:
+                        return rest
 
         return None
 

@@ -121,6 +121,13 @@ async def upload_pdf(
                     status_code=400,
                     detail=password_validation["message"]
                 )
+            # Decrypt the file in-place so downstream processing never needs the password
+            decrypted_path, decrypt_error = PDFSecurityHandler.create_decrypted_tempfile(file_path, password)
+            if decrypted_path:
+                shutil.move(decrypted_path, file_path)
+            else:
+                os.remove(file_path)
+                raise HTTPException(status_code=400, detail=f"PDF 복호화 실패: {decrypt_error}")
 
         # Calculate SHA256
         sha256 = calculate_sha256(file_path)

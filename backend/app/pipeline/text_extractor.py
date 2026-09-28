@@ -36,26 +36,17 @@ class TextExtractor:
 
         try:
             # Try to open PDF
-            doc = None
+            doc = fitz.open(pdf_path)
             try:
-                doc = fitz.open(pdf_path)
                 if doc.needs_pass:
                     if not password:
-                        doc.close()
                         raise ValueError("PDF가 암호화되어 있습니다. 비밀번호를 입력해주세요.")
                     auth_result = doc.authenticate(password)
                     if not auth_result:
-                        doc.close()
                         raise ValueError("비밀번호가 올바르지 않습니다.")
-            except Exception as e:
-                if doc:
-                    doc.close()
-                # Check if it's a password-related error
-                error_msg = str(e).lower()
-                if any(keyword in error_msg for keyword in ['password', 'encrypted', 'authentication', 'decrypt']):
-                    raise ValueError("PDF가 암호화되어 있습니다. 올바른 비밀번호를 입력해주세요.")
-                else:
-                    raise ValueError(f"PDF 파일을 열 수 없습니다: {str(e)}")
+            except Exception:
+                doc.close()
+                raise
 
             total_pages = len(doc)
 
